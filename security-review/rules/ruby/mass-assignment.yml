@@ -1,0 +1,41 @@
+# rules/ruby/mass-assignment.yml
+id: rails-mass-assignment
+name: Mass Assignment Without Strong Parameters
+description: >
+  Detects mass assignment patterns in Rails controllers where request
+  parameters are passed directly to model creation/updating without
+  strong parameter whitelisting.
+severity: high
+cwe: CWE-915
+owasp: "A01:2021"
+languages: [ruby]
+frameworks: [rails]
+tags: [rails, mass-assignment, params]
+
+detect:
+  - type: regex_in_file
+    pattern: "\\.create\\(\\s*params\\["
+    exclude_paths:
+      - "**/test*/**"
+      - "**/spec/**"
+  - type: regex_in_file
+    pattern: "\\.update\\(\\s*params\\["
+    exclude_paths:
+      - "**/test*/**"
+      - "**/spec/**"
+  - type: regex_in_file
+    pattern: "\\.new\\(\\s*params\\["
+    exclude_paths:
+      - "**/test*/**"
+      - "**/spec/**"
+  - type: file_not_contains
+    path: "**/application_controller.rb"
+    pattern: "params.require"
+
+fix:
+  - type: edit
+    description: "Use strong parameters: params.require(:model).permit(:attr1, :attr2)"
+    effort: low
+  - type: edit
+    description: "Replace params[...] with whitelisted_params method"
+    effort: low

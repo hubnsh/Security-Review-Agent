@@ -1,0 +1,25 @@
+# rules/python/path-traversal.yml
+id: python-path-traversal
+name: Path Traversal Risk
+description: >
+  Detects potential path traversal vulnerabilities where user input is used
+  to construct file paths without proper normalization and validation.
+severity: high
+cwe: CWE-22
+owasp: "A01:2021"
+languages: [python]
+tags: [path, traversal, file]
+
+detect:
+  - type: regex_in_file
+    pattern: "open\\(\\s*os\\.path\\.join\\([^)]*,\\s*(?:request|user|input|filepath|filename)"
+  - type: regex_in_file
+    pattern: "(?:open|read|write)\\(\\s*f[\"'].*\\{"
+
+fix:
+  - type: edit
+    description: "Normalize path with os.path.realpath() and validate it starts with the expected base directory"
+    effort: medium
+  - type: edit
+    description: "Use a whitelist of allowed file paths instead of user-provided paths"
+    effort: low

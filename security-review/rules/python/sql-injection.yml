@@ -1,0 +1,39 @@
+# rules/python/sql-injection.yml
+id: python-sql-injection
+name: SQL Injection Risk
+description: >
+  Detects potential SQL injection vulnerabilities where user input is
+  concatenated into SQL queries. Use parameterized queries or ORM methods
+  instead of string formatting.
+severity: critical
+cwe: CWE-89
+owasp: "A03:2021"
+languages: [python]
+tags: [sqli, injection, database]
+
+detect:
+  - type: regex_in_file
+    pattern: "\\.raw\\s*\\(\\s*f[\"']"
+    exclude_paths:
+      - "**/*.pyc"
+      - "**/migrations/**"
+  - type: regex_in_file
+    pattern: "cursor\\.execute\\s*\\(\\s*f[\"']"
+    exclude_paths:
+      - "**/*.pyc"
+  - type: regex_in_file
+    pattern: "execute\\([\"'].*\\%"
+    exclude_paths:
+      - "**/*.pyc"
+  - type: regex_in_file
+    pattern: "\\.extra\\s*\\(\\s*.*where\\s*=.*[\"']\\s*\\+"
+    exclude_paths:
+      - "**/*.pyc"
+
+fix:
+  - type: edit
+    description: "Use parameterized queries instead of f-strings"
+    effort: medium
+  - type: edit
+    description: "Django ORM: use .filter() instead of .raw() or .extra()"
+    effort: medium

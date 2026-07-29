@@ -1,0 +1,42 @@
+# rules/go/sql-injection.yml
+id: go-sql-injection
+name: SQL Injection Risk in Go
+description: >
+  Detects potential SQL injection vulnerabilities in Go code where user
+  input is interpolated into SQL queries. Use parameterized queries with
+  placeholder syntax (?) or $N instead of string formatting.
+severity: critical
+cwe: CWE-89
+owasp: "A03:2021"
+languages: [go]
+tags: [sqli, injection, database, go]
+
+detect:
+  - type: regex_in_file
+    pattern: "db\\.(Query|Exec|QueryRow)\\(\\s*f[\"']"
+    exclude_paths:
+      - "**/vendor/**"
+      - "**/test*/**"
+      - "**/*_test.go"
+  - type: regex_in_file
+    pattern: "\\.Raw\\(\\s*f[\"']"
+    exclude_paths:
+      - "**/vendor/**"
+      - "**/*_test.go"
+  - type: regex_in_file
+    pattern: "\\.Exec\\(\\s*f[\"']"
+    exclude_paths:
+      - "**/vendor/**"
+      - "**/*_test.go"
+  - type: regex_in_file
+    pattern: "fmt\\.Sprintf\\([\"'].*(?:SELECT|INSERT|UPDATE|DELETE)"
+    exclude_paths:
+      - "**/vendor/**"
+
+fix:
+  - type: edit
+    description: "Use parameterized queries with placeholder syntax: db.Query(\"SELECT * FROM users WHERE id = ?\", id)"
+    effort: medium
+  - type: edit
+    description: "Use GORM's chainable methods (.Where, .First, .Find) instead of .Raw()"
+    effort: medium

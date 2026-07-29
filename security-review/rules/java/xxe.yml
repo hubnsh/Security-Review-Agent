@@ -1,0 +1,37 @@
+# rules/java/xxe.yml
+id: java-xxe-vulnerability
+name: XML External Entity (XXE) Risk in Java
+description: >
+  Detects XML parsers configured without XXE protection, which can allow
+  attackers to read local files, perform SSRF, or cause denial of service.
+severity: high
+cwe: CWE-611
+owasp: "A05:2021"
+languages: [java]
+tags: [xxe, xml, java]
+
+detect:
+  - type: regex_in_file
+    pattern: "DocumentBuilderFactory\\.newInstance\\(\\)"
+    exclude_paths:
+      - "**/test*/**"
+  - type: regex_in_file
+    pattern: "SAXParserFactory\\.newInstance\\(\\)"
+    exclude_paths:
+      - "**/test*/**"
+  - type: regex_in_file
+    pattern: "XMLInputFactory\\.newInstance\\(\\)"
+    exclude_paths:
+      - "**/test*/**"
+  - type: regex_in_file
+    pattern: "javax\\.xml\\.parsers\\."
+    exclude_paths:
+      - "**/test*/**"
+
+fix:
+  - type: edit
+    description: "Disable DOCTYPE and external entities: factory.setFeature('http://apache.org/xml/features/disallow-doctype-decl', true)"
+    effort: medium
+  - type: edit
+    description: "Use XMLInputFactory with XXE protections: factory.setProperty(XMLInputFactory.IS_SUPPORTING_EXTERNAL_ENTITIES, false)"
+    effort: medium

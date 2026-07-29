@@ -1,0 +1,41 @@
+# rules/django/csrf.yml
+id: django-csrf-disabled
+name: CSRF Middleware Disabled
+description: >
+  Django's CSRF middleware is commented out or missing. Without CSRF
+  protection, the application is vulnerable to Cross-Site Request Forgery
+  attacks where an attacker can trick authenticated users into performing
+  unintended actions.
+severity: critical
+cwe: CWE-352
+owasp: "A01:2021"
+languages: [python]
+frameworks: [django]
+tags: [csrf, middleware, django]
+
+detect:
+  - type: file_contains
+    path: "**/settings.py"
+    pattern: "CsrfViewMiddleware"
+  - type: file_contains
+    path: "**/settings.py"
+    pattern: "MIDDLEWARE"
+  - type: line_not_matches
+    path: "**/settings.py"
+    pattern: "^\\s+'django\\.middleware\\.csrf\\.CsrfViewMiddleware"
+
+fix:
+  - type: uncomment
+    file: "**/settings.py"
+    search: "#.*CsrfViewMiddleware"
+    replacement: "    'django.middleware.csrf.CsrfViewMiddleware',"
+    effort: low
+  - type: insert_after
+    file: "**/settings.py"
+    anchor: "MIDDLEWARE\\s*=\\s*\\["
+    text: "    'django.middleware.csrf.CsrfViewMiddleware',"
+    position: after_opening_bracket
+    effort: low
+  - type: config
+    description: "For SPA + API backends, use TokenAuthentication and remove CsrfViewMiddleware only after adding CSRF token endpoints"
+    effort: medium

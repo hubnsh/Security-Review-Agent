@@ -1,0 +1,45 @@
+# rules/javascript/xss.yml
+id: js-xss-vulnerability
+name: Cross-Site Scripting (XSS) Risk
+description: >
+  Detects potential XSS vulnerabilities where user input is rendered as HTML
+  without proper sanitization. This can allow attackers to execute arbitrary
+  JavaScript in the context of other users' browsers.
+severity: high
+cwe: CWE-79
+owasp: "A03:2021"
+languages: [javascript, typescript]
+tags: [xss, injection, dom]
+
+detect:
+  - type: regex_in_file
+    pattern: 'dangerouslySetInnerHTML\s*='
+    exclude_paths:
+      - "**/node_modules/**"
+      - "**/*.test.*"
+      - "**/*.spec.*"
+  - type: regex_in_file
+    pattern: '\.innerHTML\s*='
+    exclude_paths:
+      - "**/node_modules/**"
+      - "**/*.test.*"
+      - "**/*.spec.*"
+  - type: regex_in_file
+    pattern: 'v-html\s*='
+    exclude_paths:
+      - "**/node_modules/**"
+  - type: regex_in_file
+    pattern: 'document\.write\('
+    exclude_paths:
+      - "**/node_modules/**"
+
+fix:
+  - type: edit
+    description: "Use textContent instead of innerHTML for text content"
+    effort: low
+  - type: edit
+    description: "Use DOMPurify or similar library to sanitize HTML before using dangerouslySetInnerHTML"
+    effort: medium
+  - type: edit
+    description: "Use Vue's {{ }} interpolation instead of v-html (auto-escaped)"
+    effort: low

@@ -1,0 +1,38 @@
+# rules/base/weak-crypto.yml
+id: weak-cryptographic-algorithm
+name: Weak Cryptographic Algorithm Usage
+description: >
+  Detects usage of weak or deprecated cryptographic algorithms such as MD5,
+  SHA1 for security contexts, or self-implemented crypto. These algorithms
+  are vulnerable to collision and preimage attacks.
+severity: medium
+cwe: CWE-327
+owasp: "A02:2021"
+languages: [python, javascript, go, java, ruby, php, csharp]
+tags: [crypto, hash, deprecated]
+
+detect:
+  - type: regex_in_file
+    pattern: '(hashlib\.md5|hashlib\.sha1)\s*\('
+    languages: [python]
+    exclude_paths:
+      - "**/test*/**"
+      - "**/migration*/**"
+  - type: regex_in_file
+    pattern: '(crypto\.createHash\(["'']md5["'']|crypto\.createHash\(["'']sha1["''])'
+    languages: [javascript]
+    exclude_paths:
+      - "**/node_modules/**"
+  - type: regex_in_file
+    pattern: '(MessageDigest\.getInstance\(["'']MD5["'']|MessageDigest\.getInstance\(["'']SHA-1["''])'
+    languages: [java]
+    exclude_paths:
+      - "**/test*/**"
+
+fix:
+  - type: edit
+    description: "Replace with SHA-256 or bcrypt/argon2 for password hashing"
+    effort: medium
+  - type: edit
+    description: "Use hashlib.sha256() / crypto.createHash('sha256') instead"
+    effort: low

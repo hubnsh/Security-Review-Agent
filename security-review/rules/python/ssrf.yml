@@ -1,0 +1,29 @@
+# rules/python/ssrf.yml
+id: python-ssrf
+name: Server-Side Request Forgery
+description: >
+  Detects potential SSRF vulnerabilities where user input is passed to URL
+  fetch functions, allowing an attacker to make requests to internal
+  services (e.g., metadata endpoints, internal APIs).
+severity: high
+cwe: CWE-918
+owasp: "A10:2021"
+languages: [python]
+tags: [ssrf, request, url]
+
+detect:
+  - type: regex_in_file
+    pattern: 'requests\.(?:get|post|put|delete|patch)\(\s*(?:request|body|query|input|url)'
+  - type: regex_in_file
+    pattern: 'urllib\.request\.urlopen\(\s*(?:request|body|query|input|url)'
+
+fix:
+  - type: edit
+    description: "Validate and whitelist allowed URLs/domains before making requests"
+    effort: medium
+  - type: edit
+    description: "Use a URL allowlist: ALLOWED_EXTERNAL_HOSTS = [...]"
+    effort: low
+  - type: config
+    description: "Block internal IP ranges (127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16)"
+    effort: medium

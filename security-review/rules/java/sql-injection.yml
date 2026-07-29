@@ -1,0 +1,38 @@
+# rules/java/sql-injection.yml
+id: java-sql-injection
+name: SQL Injection Risk in Java
+description: >
+  Detects potential SQL injection vulnerabilities where user input is
+  concatenated into SQL queries. Use PreparedStatement parameterized
+  queries instead.
+severity: critical
+cwe: CWE-89
+owasp: "A03:2021"
+languages: [java]
+tags: [sqli, injection, database, java]
+
+detect:
+  - type: regex_in_file
+    pattern: "\\.executeQuery\\(\\s*[\"'].*\\+"
+    exclude_paths:
+      - "**/test*/**"
+  - type: regex_in_file
+    pattern: "\\.executeUpdate\\(\\s*[\"'].*\\+"
+    exclude_paths:
+      - "**/test*/**"
+  - type: regex_in_file
+    pattern: "\\+\\s*request\\.getParameter"
+    exclude_paths:
+      - "**/test*/**"
+  - type: regex_in_file
+    pattern: "Statement\\.(execute|executeQuery|executeUpdate)\\(\\s*[\"']"
+    exclude_paths:
+      - "**/test*/**"
+
+fix:
+  - type: edit
+    description: "Use PreparedStatement with ? placeholders instead of Statement"
+    effort: medium
+  - type: edit
+    description: "Use JPA Repository methods (findBy*) or @Query with named parameters"
+    effort: medium

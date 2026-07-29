@@ -1,0 +1,33 @@
+# rules/django/session-cookie.yml
+id: django-session-cookie-insecure
+name: Session Cookie Security Misconfiguration
+description: >
+  Django session cookies are missing security-related settings like
+  SESSION_COOKIE_SECURE (HTTPS only), SESSION_COOKIE_HTTPONLY, and
+  SESSION_COOKIE_SAMESITE. Without these, session cookies can be
+  intercepted or accessed by JavaScript, leading to session hijacking.
+severity: high
+cwe: CWE-614
+owasp: "A05:2021"
+languages: [python]
+frameworks: [django]
+tags: [session, cookie, django, config]
+
+detect:
+  - type: file_contains
+    path: "**/settings.py"
+    pattern: "SESSION_"
+  - type: file_not_contains
+    path: "**/settings.py"
+    pattern: "SESSION_COOKIE_SECURE"
+
+fix:
+  - type: edit
+    description: "Add SESSION_COOKIE_SECURE and SESSION_COOKIE_HTTPONLY settings"
+    file: "**/settings.py"
+    old: "# Session settings"
+    new: "# Session security settings\nSESSION_COOKIE_SECURE = True  # HTTPS only\nSESSION_COOKIE_HTTPONLY = True\nSESSION_COOKIE_SAMESITE = 'Lax'\nSESSION_COOKIE_AGE = 86400  # 24 hours"
+    effort: low
+  - type: config
+    description: "Set SESSION_COOKIE_SECURE based on environment: os.getenv('DJANGO_SESSION_SECURE', 'False') == 'True'"
+    effort: low

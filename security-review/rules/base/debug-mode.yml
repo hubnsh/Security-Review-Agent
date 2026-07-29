@@ -1,0 +1,36 @@
+# rules/base/debug-mode.yml
+id: debug-mode-enabled
+name: Debug/Dev Mode Enabled in Production
+description: >
+  Debug or development mode leaks detailed error information, stack traces,
+  and potentially sensitive configuration data to end users. This is a
+  common misconfiguration that should be disabled in production.
+severity: high
+cwe: CWE-200
+owasp: "A05:2021"
+languages: [python, javascript, go, java, ruby, php, csharp]
+tags: [config, debug, production]
+
+detect:
+  - type: regex_in_file
+    pattern: 'DEBUG\s*[=:]\s*True'
+    path: "**/settings.py"
+  - type: regex_in_file
+    pattern: 'NODE_ENV\s*[=:]\s*["'']development["'']'
+    path: "**/*.{js,ts,json}"
+    exclude_paths:
+      - "**/node_modules/**"
+  - type: regex_in_file
+    pattern: 'debug:\s*true'
+    path: "**/application.{yml,yaml,properties}"
+  - type: regex_in_file
+    pattern: 'APP_DEBUG\s*[=:]\s*true'
+    exclude_extensions: [.md]
+
+fix:
+  - type: edit
+    description: "Set DEBUG=False / NODE_ENV=production in production config"
+    effort: low
+  - type: config
+    description: "Use environment variable to control debug mode (e.g., DEBUG=os.getenv('DEBUG', 'False') == 'True')"
+    effort: low

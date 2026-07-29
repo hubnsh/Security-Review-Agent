@@ -1,0 +1,35 @@
+# rules/java/actuator-exposure.yml
+id: spring-actuator-exposed
+name: Spring Boot Actuator Exposed Without Authentication
+description: >
+  Spring Boot Actuator endpoints are exposed without authentication,
+  potentially leaking sensitive information about the application
+  environment, health, metrics, and configuration.
+severity: high
+cwe: CWE-200
+owasp: "A05:2021"
+languages: [java]
+frameworks: [spring]
+tags: [actuator, spring, exposure, java]
+
+detect:
+  - type: regex_in_file
+    pattern: "spring-boot-starter-actuator"
+    path: "**/pom.xml"
+  - type: regex_in_file
+    pattern: "management\\.endpoints\\.web\\.exposure\\.include=."
+    path: "**/application.{yml,yaml,properties}"
+  - type: file_not_contains
+    path: "**/application.{yml,yaml,properties}"
+    pattern: "management.endpoints.web.exposure.include=health,info"
+
+fix:
+  - type: edit
+    description: "Restrict actuator exposure: management.endpoints.web.exposure.include=health,info"
+    file: "**/application.yml"
+    old: null
+    new: null
+    effort: low
+  - type: config
+    description: "Add Spring Security dependency and secure all actuator endpoints"
+    effort: high

@@ -1,0 +1,17 @@
+# Security Review Agent — 可选依赖
+#
+# 安装所有可选工具以获得最佳扫描效果：
+#   pip install -r requirements.txt
+# 或按需安装单个工具即可，缺少时会自动降级。
+
+# Python 依赖漏洞扫描（CVE）
+pip-audit>=2.10
+
+# Python 静态代码安全分析（SAST）
+bandit>=1.7
+
+# 多语言规则匹配引擎（SAST 增强）
+semgrep>=1.0
+
+# YAML 规则解析（已内置简易解析器，安装此库获取完整支持）
+PyYAML>=6.0

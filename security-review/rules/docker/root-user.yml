@@ -1,0 +1,35 @@
+# rules/docker/root-user.yml
+id: docker-container-as-root
+name: Container Running as Root
+description: >
+  The Docker container runs as the root user. Running containers as root
+  increases the blast radius of a container breakout. A non-root user
+  should be used whenever possible.
+severity: medium
+cwe: CWE-250
+owasp: "A05:2021"
+languages: []
+tags: [docker, container, root]
+
+detect:
+  - type: file_not_contains
+    path: "**/Dockerfile*"
+    pattern: "USER "
+  - type: file_contains
+    path: "**/Dockerfile*"
+    pattern: "FROM "
+
+fix:
+  - type: insert_before
+    file: "**/Dockerfile*"
+    anchor: "CMD|ENTRYPOINT"
+    text: "RUN addgroup -S appgroup && adduser -S appuser -G appgroup\nUSER appuser"
+    position: before
+    effort: low
+  - type: insert_before
+    description: "For Debian-based images: adduser --system --group appuser"
+    file: "**/Dockerfile*"
+    anchor: "CMD|ENTRYPOINT"
+    text: "RUN groupadd -r appuser && useradd -r -g appuser appuser\nUSER appuser"
+    position: before
+    effort: low

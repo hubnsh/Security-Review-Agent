@@ -1,0 +1,31 @@
+# rules/django/debug-true.yml
+id: django-debug-true
+name: DEBUG Mode Enabled
+description: >
+  Django DEBUG=True exposes detailed error pages with stack traces,
+  local variables, settings, and SQL queries. This is a critical information
+  disclosure risk and must be False in production.
+severity: high
+cwe: CWE-200
+owasp: "A05:2021"
+languages: [python]
+frameworks: [django]
+tags: [debug, config, django]
+
+detect:
+  - type: line_matches
+    path: "**/settings.py"
+    pattern: '^DEBUG\s*=\s*True\s*$'
+
+fix:
+  - type: edit
+    file: "**/settings.py"
+    old: "DEBUG = True"
+    new: "DEBUG = False"
+    effort: low
+  - type: edit
+    description: "Use environment variable to control debug mode"
+    file: "**/settings.py"
+    old: "DEBUG = True"
+    new: "DEBUG = os.getenv('DJANGO_DEBUG', 'False') == 'True'"
+    effort: low

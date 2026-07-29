@@ -1,0 +1,41 @@
+# rules/javascript/prototype-pollution.yml
+id: js-prototype-pollution
+name: Prototype Pollution Risk
+description: >
+  Detects patterns that can lead to prototype pollution, where an attacker
+  can inject properties into an object's prototype chain, potentially
+  affecting all objects of that type.
+severity: high
+cwe: CWE-915
+owasp: "A08:2021"
+languages: [javascript, typescript]
+tags: [prototype, pollution, object]
+
+detect:
+  - type: regex_in_file
+    pattern: '\.merge\(\s*\{\}'
+    exclude_paths:
+      - "**/node_modules/**"
+  - type: regex_in_file
+    pattern: 'Object\.assign\(\s*\{'
+    exclude_paths:
+      - "**/node_modules/**"
+  - type: regex_in_file
+    pattern: '_.merge\('
+    exclude_paths:
+      - "**/node_modules/**"
+  - type: regex_in_file
+    pattern: '\.assign\(\s*[^,]+,\s*(?:req\.|body\.|query\.)'
+    exclude_paths:
+      - "**/node_modules/**"
+
+fix:
+  - type: edit
+    description: "Use Object.assign({}, source) with empty target to avoid mutating existing objects"
+    effort: low
+  - type: edit
+    description: "Use Object.hasOwn() or hasOwnProperty() to check for inherited properties"
+    effort: low
+  - type: edit
+    description: "Freeze the prototype with Object.freeze(Object.prototype)"
+    effort: low

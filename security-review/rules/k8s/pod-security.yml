@@ -1,0 +1,34 @@
+# rules/k8s/pod-security.yml
+id: k8s-container-as-root
+name: K8s Container Running as Root
+description: >
+  Kubernetes pods are configured to run containers as the root user
+  without security context constraints. This increases the blast radius
+  of container breakout attacks.
+severity: high
+cwe: CWE-250
+owasp: "A05:2021"
+languages: []
+tags: [k8s, kubernetes, container, security-context]
+
+detect:
+  - type: file_contains
+    path: "**/*.k8s.{yml,yaml}"
+    pattern: "kind: Pod"
+  - type: file_not_contains
+    path: "**/*.k8s.{yml,yaml}"
+    pattern: "runAsNonRoot: true"
+  - type: file_not_contains
+    path: "**/*.k8s.{yml,yaml}"
+    pattern: "securityContext"
+
+fix:
+  - type: edit
+    description: "Add security context with runAsNonRoot: true and readOnlyRootFilesystem: true"
+    file: "**/*.k8s.yml"
+    old: "kind: Pod"
+    new: "kind: Pod\nspec:\n  securityContext:\n    runAsNonRoot: true\n  containers:\n    - name: app\n      securityContext:\n        allowPrivilegeEscalation: false\n        readOnlyRootFilesystem: true"
+    effort: medium
+  - type: config
+    description: "Define a PodSecurityPolicy or OPA/Gatekeeper policy to enforce non-root globally"
+    effort: high

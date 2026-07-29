@@ -1,0 +1,35 @@
+# rules/go/weak-hash.yml
+id: go-weak-hash
+name: Weak Hash Algorithm in Go
+description: >
+  Detects usage of weak or deprecated hash algorithms (MD5, SHA1) for
+  security-sensitive operations like password storage or data integrity.
+severity: medium
+cwe: CWE-327
+owasp: "A02:2021"
+languages: [go]
+tags: [crypto, hash, go]
+
+detect:
+  - type: regex_in_file
+    pattern: "crypto/md5"
+    exclude_paths:
+      - "**/vendor/**"
+      - "**/*_test.go"
+  - type: regex_in_file
+    pattern: "crypto/sha1"
+    exclude_paths:
+      - "**/vendor/**"
+      - "**/*_test.go"
+  - type: regex_in_file
+    pattern: "md5\\.(New|Sum|Hash)"
+    exclude_paths:
+      - "**/vendor/**"
+
+fix:
+  - type: edit
+    description: "Use crypto/sha256 or crypto/sha512 instead of md5/sha1 for security contexts"
+    effort: low
+  - type: edit
+    description: "For password hashing, use golang.org/x/crypto/bcrypt or argon2"
+    effort: medium

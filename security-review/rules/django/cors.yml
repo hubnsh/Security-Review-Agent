@@ -1,0 +1,32 @@
+# rules/django/cors.yml
+id: django-cors-allow-all
+name: CORS Allow All Origins
+description: >
+  CORS_ALLOW_ALL_ORIGINS = True allows any website to make cross-origin
+  requests to the API. When combined with CORS_ALLOW_CREDENTIALS = True,
+  any website can make authenticated requests using the user's session
+  cookies, leading to session hijacking.
+severity: high
+cwe: CWE-942
+owasp: "A01:2021"
+languages: [python]
+frameworks: [django]
+tags: [cors, config, django]
+
+detect:
+  - type: line_matches
+    path: "**/settings.py"
+    pattern: "CORS_ALLOW_ALL_ORIGINS\\s*=\\s*True"
+
+fix:
+  - type: edit
+    file: "**/settings.py"
+    old: "CORS_ALLOW_ALL_ORIGINS = True"
+    new: "CORS_ALLOWED_ORIGINS = [\n    'https://yourfrontend.com',\n    'http://localhost:8080',\n]\nCORS_ALLOW_ALL_ORIGINS = False"
+    effort: low
+  - type: edit
+    description: "Use environment variable to manage CORS origins"
+    file: "**/settings.py"
+    old: "CORS_ALLOW_ALL_ORIGINS = True"
+    new: "import json\nCORS_ALLOWED_ORIGINS = json.loads(os.getenv('CORS_ALLOWED_ORIGINS', '[]'))\nCORS_ALLOW_ALL_ORIGINS = False"
+    effort: low

@@ -1,0 +1,36 @@
+# rules/ruby/sql-injection.yml
+id: ruby-sql-injection
+name: SQL Injection Risk in Ruby/Rails
+description: >
+  Detects potential SQL injection vulnerabilities where user input is
+  passed to raw SQL queries in Ruby/Rails applications.
+severity: critical
+cwe: CWE-89
+owasp: "A03:2021"
+languages: [ruby]
+tags: [sqli, injection, rails, ruby]
+
+detect:
+  - type: regex_in_file
+    pattern: "where\\(\\s*[\"'].*\\#\\{"
+    exclude_paths:
+      - "**/test*/**"
+      - "**/spec/**"
+  - type: regex_in_file
+    pattern: "execute\\(\\s*[\"'].*\\+"
+    exclude_paths:
+      - "**/test*/**"
+      - "**/spec/**"
+  - type: regex_in_file
+    pattern: "find_by_sql\\(\\s*[\"'].*\\+"
+    exclude_paths:
+      - "**/test*/**"
+      - "**/spec/**"
+
+fix:
+  - type: edit
+    description: "Use ActiveRecord query methods with hash conditions: where(column: value)"
+    effort: low
+  - type: edit
+    description: "Use sanitize_sql or ? placeholders: where('column = ?', value)"
+    effort: low

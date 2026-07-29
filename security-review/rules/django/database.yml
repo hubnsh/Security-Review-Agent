@@ -1,0 +1,32 @@
+# rules/django/database-sqlite-production.yml
+id: django-sqlite-production
+name: SQLite Database Used for Production
+description: >
+  SQLite is being used as the database engine. SQLite is not designed for
+  concurrent write access and is unsuitable for production deployments.
+  Use PostgreSQL, MySQL, or another production-grade database instead.
+severity: medium
+cwe: CWE-1053
+owasp: "A05:2021"
+languages: [python]
+frameworks: [django]
+tags: [database, sqlite, production, config]
+
+detect:
+  - type: line_matches
+    path: "**/settings.py"
+    pattern: "ENGINE.*sqlite3"
+
+fix:
+  - type: config
+    description: "Use PostgreSQL for production. Install psycopg2 and update DATABASES config"
+    effort: high
+  - type: config
+    description: "Use environment variables for DB configuration: DATABASE_URL"
+    effort: medium
+  - type: edit
+    description: "Template for production database config"
+    file: "**/settings.py"
+    old: null
+    new: null
+    effort: high

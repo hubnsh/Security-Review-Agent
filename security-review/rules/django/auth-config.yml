@@ -1,0 +1,33 @@
+# rules/django/default-permission-allowany.yml
+id: django-default-allowany
+name: Default DRF Permission Set to AllowAny
+description: >
+  Django REST Framework is configured with DEFAULT_PERMISSION_CLASSES set
+  to AllowAny, meaning all API endpoints are publicly accessible by default
+  unless explicitly protected at the view level. This can unintentionally
+  expose sensitive endpoints.
+severity: high
+cwe: CWE-862
+owasp: "A01:2021"
+languages: [python]
+frameworks: [django]
+tags: [auth, permission, drf, config]
+
+detect:
+  - type: regex_in_file
+    path: "**/settings.py"
+    pattern: "AllowAny"
+  - type: file_contains
+    path: "**/settings.py"
+    pattern: "REST_FRAMEWORK"
+
+fix:
+  - type: edit
+    description: "Change default permission to IsAuthenticated"
+    file: "**/settings.py"
+    old: "'DEFAULT_PERMISSION_CLASSES': [\n        'rest_framework.permissions.AllowAny',"
+    new: "'DEFAULT_PERMISSION_CLASSES': [\n        'rest_framework.permissions.IsAuthenticated',"
+    effort: low
+  - type: config
+    description: "Keep AllowAny but audit all endpoints for explicit permission_classes"
+    effort: medium

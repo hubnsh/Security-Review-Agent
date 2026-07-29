@@ -1,0 +1,39 @@
+# rules/javascript/eval-usage.yml
+id: js-eval-usage
+name: eval() / Dynamic Code Execution
+description: >
+  Detects usage of eval() and similar dynamic code execution functions.
+  These can lead to code injection attacks if any user-controlled data
+  reaches them.
+severity: high
+cwe: CWE-95
+owasp: "A03:2021"
+languages: [javascript, typescript]
+tags: [eval, injection, dynamic]
+
+detect:
+  - type: regex_in_file
+    pattern: "eval\\s*\\("
+    exclude_paths:
+      - "**/node_modules/**"
+      - "**/*.min.*"
+  - type: regex_in_file
+    pattern: "Function\\s*\\(\\s*[\"']"
+    exclude_paths:
+      - "**/node_modules/**"
+  - type: regex_in_file
+    pattern: "setTimeout\\s*\\(\\s*[\"']"
+    exclude_paths:
+      - "**/node_modules/**"
+  - type: regex_in_file
+    pattern: "setInterval\\s*\\(\\s*[\"']"
+    exclude_paths:
+      - "**/node_modules/**"
+
+fix:
+  - type: edit
+    description: "Replace eval() with safer alternatives (JSON.parse, Function constructor, etc.)"
+    effort: medium
+  - type: edit
+    description: "Never pass user input to eval(), setTimeout(string), or new Function()"
+    effort: low

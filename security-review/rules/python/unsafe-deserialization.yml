@@ -1,0 +1,31 @@
+# rules/python/unsafe-deserialization.yml
+id: python-unsafe-deserialization
+name: Unsafe Deserialization
+description: >
+  Detects unsafe deserialization patterns that can lead to remote code
+  execution. Pickle, yaml.load (without SafeLoader), and eval are known
+  vectors for arbitrary code execution.
+severity: critical
+cwe: CWE-502
+owasp: "A08:2021"
+languages: [python]
+tags: [deserialization, pickle, yaml]
+
+detect:
+  - type: regex_in_file
+    pattern: 'pickle\.loads?\s*\('
+  - type: regex_in_file
+    pattern: 'yaml\.load\(\s*(?!.*Loader=)'
+  - type: regex_in_file
+    pattern: 'shelve\.open\('
+
+fix:
+  - type: edit
+    description: "Use yaml.safe_load() instead of yaml.load()"
+    effort: low
+  - type: edit
+    description: "Replace pickle with JSON for untrusted data"
+    effort: medium
+  - type: edit
+    description: "Use a structured format (JSON/MessagePack) with schema validation"
+    effort: high

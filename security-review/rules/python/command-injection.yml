@@ -1,0 +1,31 @@
+# rules/python/command-injection.yml
+id: python-command-injection
+name: Command Injection Risk
+description: >
+  Detects potential OS command injection where user input is interpolated
+  into shell commands. Use subprocess with argument lists instead of strings.
+severity: critical
+cwe: CWE-78
+owasp: "A03:2021"
+languages: [python]
+tags: [injection, command, os]
+
+detect:
+  - type: regex_in_file
+    pattern: "os\\.system\\s*\\(\\s*f[\"']"
+  - type: regex_in_file
+    pattern: "os\\.popen\\s*\\(\\s*f[\"']"
+  - type: regex_in_file
+    pattern: "subprocess\\.\\w+\\s*\\(\\s*f[\"']"
+  - type: regex_in_file
+    pattern: "subprocess\\.\\w+\\([\"'].*\\+.*(?:request|input|param|user|data)"
+  - type: regex_in_file
+    pattern: "eval\\s*\\(\\s*[\"']"
+
+fix:
+  - type: edit
+    description: "Use subprocess.run([cmd, arg1, arg2]) with argument list instead of shell string"
+    effort: medium
+  - type: edit
+    description: "Sanitize user input with shlex.quote() if shell=True is unavoidable"
+    effort: low

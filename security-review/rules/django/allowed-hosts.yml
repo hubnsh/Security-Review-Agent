@@ -1,0 +1,31 @@
+# rules/django/allowed-hosts.yml
+id: django-allowed-hosts-wildcard
+name: ALLOWED_HOSTS Set to Wildcard
+description: >
+  ALLOWED_HOSTS = ['*'] allows any HTTP Host header, making the application
+  vulnerable to DNS rebinding and host header injection attacks. This should
+  be restricted to the actual domain names the application serves.
+severity: high
+cwe: CWE-345
+owasp: "A05:2021"
+languages: [python]
+frameworks: [django]
+tags: [hosts, config, django]
+
+detect:
+  - type: line_matches
+    path: "**/settings.py"
+    pattern: "ALLOWED_HOSTS\\s*=\\s*\\[\\s*['\"]\\*['\"]\\s*\\]"
+
+fix:
+  - type: edit
+    file: "**/settings.py"
+    old: "ALLOWED_HOSTS = ['*']"
+    new: "ALLOWED_HOSTS = ['yourdomain.com', 'www.yourdomain.com']"
+    effort: low
+  - type: edit
+    description: "Use environment variable to set ALLOWED_HOSTS dynamically"
+    file: "**/settings.py"
+    old: "ALLOWED_HOSTS = ['*']"
+    new: "import os\nALLOWED_HOSTS = os.getenv('DJANGO_ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')"
+    effort: low
