@@ -58,12 +58,178 @@ from dependency_db import (
     format_vulnerability,
 )
 from sast_patterns import match_in_content, get_all_vuln_types
+from ast_scanner import scan_python_source
 
 
 # =====================================================================
 # 内置忽略规则默认路径
 # =====================================================================
 IGNORE_FILE = ".secreview-ignore"
+
+# 外部工具开关（由 --no-external 控制）
+USE_EXTERNAL_TOOLS = True
+
+
+# =====================================================================
+# 外部工具调用（pip-audit / bandit）— 可选，缺失时自动降级
+# =====================================================================
+
+def _run_tool(cmd: list[str], cwd: str, timeout: int = 180):
+    """
+    运行外部工具命令，成功返回 stdout，失败返回 None。
+
+    Args:
+        cmd: 命令列表
+        cwd: 工作目录
+        timeout: 超时秒数
+
+    Returns:
+        (stdout, returncode) 或 None（工具不存在/超时）
+    """
+    import subprocess
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, cwd=cwd, timeout=timeout,
+        )
+        return result.stdout, result.returncode
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+
+
+def _try_pip_audit(requirements_file: str, root_path: str) -> Optional[list[Finding]]:
+    """
+    尝试用 pip-audit 扫描 requirements.txt。
+
+    成功返回 Finding 列表；工具不可用或失败返回 None（调用方降级）。
+    """
+    if not USE_EXTERNAL_TOOLS:
+        return None
+
+    stdout = _run_tool(
+        ["pip-audit", "-r", requirements_file, "--json", "--desc", "on"],
+        root_path,
+    )
+    if stdout is None or stdout[1] != 0:
+        return None
+
+    try:
+        data = json.loads(stdout[0])
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+    findings = []
+    rel_path = os.path.relpath(requirements_file, root_path).replace("\\", "/")
+    for dep in data.get("dependencies", []):
+        pkg_name = dep.get("name", "")
+        pkg_ver = dep.get("version", "")
+        for vuln in dep.get("vulns", []):
+            cve_id = vuln.get("id") or (vuln.get("aliases") or [""])[0]
+            fix_versions = vuln.get("fix_versions") or []
+            fix_ver = fix_versions[0] if fix_versions else "latest"
+            desc = vuln.get("description", "")[:200]
+            findings.append(Finding(
+                id=f"dep-pip-{pkg_name}-{cve_id.lower()}",
+                dimension=ScanDimension.DEPENDENCY,
+                severity=Severity.HIGH,
+                title=f"Vulnerable dependency: {pkg_name} {pkg_ver}",
+                description=desc or f"Known vulnerability {cve_id}",
+                cwe=cve_id,
+                file_path=rel_path,
+                line=1,
+                fixes=[
+                    Fix(
+                        description=f"Upgrade {pkg_name} to {fix_ver}",
+                        type="edit",
+                        effort="low",
+                        edit_operations=[
+                            EditOperation(
+                                file=rel_path,
+                                old_string=f"{pkg_name}=={pkg_ver}",
+                                new_string=f"{pkg_name}=={fix_ver}",
+                                description=(
+                                    f"Update {pkg_name} from {pkg_ver} "
+                                    f"to {fix_ver}"
+                                ),
+                            )
+                        ],
+                    )
+                ],
+            ))
+    return findings
+
+
+def _try_bandit(root_path: str) -> Optional[list[Finding]]:
+    """
+    尝试用 bandit 扫描 Python 代码。
+
+    成功返回 Finding 列表；工具不可用或失败返回 None（调用方降级）。
+    """
+    if not USE_EXTERNAL_TOOLS:
+        return None
+
+    stdout = _run_tool(
+        ["bandit", "-r", ".", "-f", "json", "--quiet"],
+        root_path,
+    )
+    if stdout is None or stdout[1] != 0:
+        return None
+
+    try:
+        data = json.loads(stdout[0])
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+    # bandit test_id → (漏洞类型, 严重度)
+    test_map = {
+        "B601": ("sql-injection", Severity.CRITICAL),
+        "B602": ("sql-injection", Severity.HIGH),
+        "B608": ("sql-injection", Severity.HIGH),
+        "B603": ("command-injection", Severity.HIGH),
+        "B604": ("command-injection", Severity.HIGH),
+        "B605": ("command-injection", Severity.HIGH),
+        "B606": ("command-injection", Severity.CRITICAL),
+        "B607": ("command-injection", Severity.CRITICAL),
+        "B610": ("path-traversal", Severity.HIGH),
+        "B611": ("path-traversal", Severity.HIGH),
+        "B201": ("eval-usage", Severity.HIGH),
+        "B301": ("unsafe-deserialization", Severity.CRITICAL),
+        "B302": ("unsafe-deserialization", Severity.CRITICAL),
+        "B303": ("unsafe-deserialization", Severity.CRITICAL),
+        "B506": ("unsafe-deserialization", Severity.HIGH),
+        "B401": ("command-injection", Severity.MEDIUM),
+    }
+    cwe_map = {
+        "sql-injection": "CWE-89",
+        "command-injection": "CWE-78",
+        "path-traversal": "CWE-22",
+        "eval-usage": "CWE-94",
+        "unsafe-deserialization": "CWE-502",
+    }
+
+    findings = []
+    for res in data.get("results", []):
+        test_id = res.get("test_id", "")
+        if test_id not in test_map:
+            continue
+        vuln_type, severity = test_map[test_id]
+        fname = res.get("filename", "")
+        rel_path = os.path.relpath(fname, root_path).replace("\\", "/")
+        line = res.get("line_number") or 1
+        findings.append(Finding(
+            id=f"sast-bandit-{test_id}-{os.path.splitext(os.path.basename(fname))[0]}",
+            dimension=ScanDimension.SAST,
+            severity=severity,
+            title=res.get("issue_text", f"Bandit {test_id}"),
+            description=(
+                f"Bandit {test_id}: {res.get('issue_text', '')} "
+                f"(confidence: {res.get('issue_confidence', '?')})"
+            ),
+            cwe=cwe_map.get(vuln_type, ""),
+            file_path=rel_path,
+            line=line,
+            code_snippet=(res.get("code") or "")[:200],
+        ))
+    return findings
 
 
 # =====================================================================
@@ -504,7 +670,7 @@ def _parse_requirements(content: str) -> list[tuple[str, str, int]]:
 def _scan_python_deps(root_path: str, probe: ProbeResult,
                       ignore_rules: list[dict],
                       changed_files: Optional[set[str]] = None) -> list[Finding]:
-    """扫描 Python 依赖"""
+    """扫描 Python 依赖（优先 pip-audit，降级内置 CVE 库）"""
     findings = []
 
     for dep_type in ("requirements.txt",):
@@ -519,6 +685,14 @@ def _scan_python_deps(root_path: str, probe: ProbeResult,
                 continue
 
             rel_path = os.path.relpath(df, root_path).replace("\\", "/")
+
+            # 首选 pip-audit（若可用）
+            pip_audit_findings = _try_pip_audit(df, root_path)
+            if pip_audit_findings is not None:
+                findings.extend(pip_audit_findings)
+                continue
+
+            # 降级：内置 CVE 库
             packages = _parse_requirements(content)
 
             for pkg_name, pkg_ver, line_no in packages:
@@ -846,6 +1020,12 @@ def scan_sast(probe: ProbeResult, root_path: str,
         "xxe": Severity.MEDIUM,
     }
 
+    # 首选 bandit（Python，若可用）
+    if "python" in [l.lower() for l in probe.languages]:
+        bandit_findings = _try_bandit(root_path)
+        if bandit_findings is not None:
+            findings.extend(bandit_findings)
+
     cwe_map = {
         "sql-injection": "CWE-89",
         "command-injection": "CWE-78",
@@ -880,7 +1060,11 @@ def scan_sast(probe: ProbeResult, root_path: str,
                 if not content:
                     continue
 
+                # Python 文件额外运行 AST 扫描（更精确的污点分析）
                 results = match_in_content(content, lang)
+                if lang == "python":
+                    results.extend(scan_python_source(content))
+
                 for r in results:
                     if utils_is_ignored(
                         rel_path, r["line"],
@@ -1119,8 +1303,13 @@ def aggregate_findings(all_findings: list[list[Finding]],
             ):
                 continue
 
-            # 去重 key
-            key = (f.file_path, f.line or 0, f.id.split("-")[0])
+            # 去重 key：SAST 按漏洞类型区分，其他维度按维度区分
+            if f.dimension == ScanDimension.SAST:
+                parts = f.id.split("-")
+                vuln_type = parts[1] if len(parts) >= 3 else "sast"
+                key = (f.file_path, f.line or 0, "sast", vuln_type)
+            else:
+                key = (f.file_path, f.line or 0, f.dimension.value, "")
             if key in seen:
                 continue
             seen.add(key)
@@ -1416,6 +1605,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="不生成修复方案",
     )
     parser.add_argument(
+        "--no-external",
+        action="store_true",
+        help="不调用外部工具（pip-audit/bandit），仅用内置引擎",
+    )
+    parser.add_argument(
+        "--update-cve",
+        action="store_true",
+        help="从 OSV.dev 拉取最新 CVE 数据并写入缓存（.cve-cache.json）",
+    )
+    parser.add_argument(
         "--apply",
         metavar="SELECTION",
         help="扫描后自动应用修复：'all' 或编号列表如 '1,3,5'（与报告编号对应）",
@@ -1436,7 +1635,28 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     """主入口"""
     args = parse_args(argv)
+
+    # 独立命令：更新 CVE 缓存
+    if args.update_cve:
+        _safe_print("🔄 正在从 OSV.dev 拉取 CVE 数据...")
+        from dependency_db import update_cve_cache
+        try:
+            stats = update_cve_cache()
+        except Exception as e:
+            _safe_print(f"❌ CVE 更新失败: {e}", file=sys.stderr)
+            return 1
+        _safe_print(f"✅ 更新 {stats['updated_packages']} 个包，"
+                    f"共 {stats['total']} 条漏洞记录")
+        _safe_print(f"   缓存文件: {stats.get('cache_file', '?')}")
+        if stats["failed"]:
+            _safe_print(f"   ⚠️ 失败 {len(stats['failed'])} 项: "
+                        f"{stats['failed'][:5]}")
+        return 0
+
     root_path = os.path.abspath(args.path)
+
+    global USE_EXTERNAL_TOOLS
+    USE_EXTERNAL_TOOLS = not args.no_external
 
     if not os.path.isdir(root_path):
         _safe_print(f"❌ 路径不存在: {root_path}", file=sys.stderr)

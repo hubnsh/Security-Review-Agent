@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest tests/test_ast_scanner.py -q)",
+      "Bash(rm -rf /tmp/sec-ast)",
+      "Bash(mkdir -p /tmp/sec-ast)",
+      "Bash(PYTHONIOENCODING=utf-8 python engine.py --path /tmp/sec-ast --focus sast --no-external --output json --no-fix)",
+      "Bash(python -c ' *)",
+      "Bash(PYTHONIOENCODING=utf-8 timeout 90 python engine.py --update-cve)",
+      "Bash(PYTHONIOENCODING=utf-8 timeout 120 python engine.py --update-cve)",
+      "Bash(PYTHONIOENCODING=utf-8 python engine.py --update-cve)",
+      "Bash(echo \"exit: $?\")",
+      "Bash(PYTHONIOENCODING=utf-8 python engine.py --focus sast --no-external --output json --no-fix)",
+      "Bash(grep -E \"\\\\.pyc$|__pycache__\")"
+    ]
+  }
+}

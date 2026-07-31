@@ -1,10 +1,28 @@
 """
 内置 CVE 对照表 — 当 pip-audit/npm audit 等外部工具不可用时使用
 
-此数据库记录了常见 Python 和 Node.js 包的已知高/严重级漏洞。
+此数据库记录了常见包的已知高/严重级漏洞。
 注意：这是降级方案，仅覆盖常见包的重大漏洞。
-生产环境建议安装 pip-audit / npm audit 获取实时数据。
+可用 `python engine.py --update-cve` 从 OSV.dev 拉取实时数据并缓存。
 """
+
+import json
+import os
+from typing import Optional
+
+# OSV 缓存文件路径（--update-cve 生成，check_* 函数优先读取）
+CVE_CACHE_DEFAULT = os.path.join(os.path.dirname(__file__), ".cve-cache.json")
+
+# 生态 → OSV 生态名
+OSV_ECOSYSTEMS = {
+    "python": "PyPI",
+    "npm": "npm",
+    "go": "Go",
+    "java": "Maven",
+    "ruby": "RubyGems",
+    "rust": "crates.io",
+    "php": "Packagist",
+}
 
 # Python 包已知漏洞
 # 格式：package_name -> [(version_constraint, cve_id, severity, min_fixed_version, description)]
@@ -250,6 +268,9 @@ def check_python_package(name: str, version: str) -> list[dict]:
     Returns:
         List of {cve_id, severity, fixed_version, description}
     """
+    cache_hits = _cache_hits(name, version, "python")
+    if cache_hits:
+        return cache_hits
     results = []
     pkg_vulns = BUILTIN_CVE_DB_PYTHON.get(name.lower(), [])
     for constraint, cve_id, severity, fixed_version, desc in pkg_vulns:
@@ -274,6 +295,9 @@ def check_npm_package(name: str, version: str) -> list[dict]:
     Returns:
         List of {cve_id, severity, fixed_version, description}
     """
+    cache_hits = _cache_hits(name, version, "npm")
+    if cache_hits:
+        return cache_hits
     results = []
     pkg_vulns = BUILTIN_CVE_DB_NPM.get(name, [])
     for constraint, cve_id, severity, fixed_version, desc in pkg_vulns:
@@ -344,6 +368,9 @@ def check_go_package(name: str, version: str) -> list[dict]:
     Returns:
         List of {cve_id, severity, fixed_version, description}
     """
+    cache_hits = _cache_hits(name, version, "go")
+    if cache_hits:
+        return cache_hits
     results = []
     pkg_vulns = BUILTIN_CVE_DB_GO.get(name, [])
     for constraint, cve_id, severity, fixed_version, desc in pkg_vulns:
@@ -368,6 +395,9 @@ def check_java_package(name: str, version: str) -> list[dict]:
     Returns:
         List of {cve_id, severity, fixed_version, description}
     """
+    cache_hits = _cache_hits(name, version, "java")
+    if cache_hits:
+        return cache_hits
     results = []
     pkg_vulns = BUILTIN_CVE_DB_JAVA.get(name, [])
     for constraint, cve_id, severity, fixed_version, desc in pkg_vulns:
@@ -392,6 +422,9 @@ def check_bundler_package(name: str, version: str) -> list[dict]:
     Returns:
         List of {cve_id, severity, fixed_version, description}
     """
+    cache_hits = _cache_hits(name, version, "ruby")
+    if cache_hits:
+        return cache_hits
     results = []
     pkg_vulns = BUILTIN_CVE_DB_RUBY.get(name.lower(), [])
     for constraint, cve_id, severity, fixed_version, desc in pkg_vulns:
@@ -416,6 +449,9 @@ def check_cargo_package(name: str, version: str) -> list[dict]:
     Returns:
         List of {cve_id, severity, fixed_version, description}
     """
+    cache_hits = _cache_hits(name, version, "rust")
+    if cache_hits:
+        return cache_hits
     results = []
     pkg_vulns = BUILTIN_CVE_DB_RUST.get(name.lower(), [])
     for constraint, cve_id, severity, fixed_version, desc in pkg_vulns:
@@ -440,6 +476,9 @@ def check_composer_package(name: str, version: str) -> list[dict]:
     Returns:
         List of {cve_id, severity, fixed_version, description}
     """
+    cache_hits = _cache_hits(name, version, "php")
+    if cache_hits:
+        return cache_hits
     results = []
     pkg_vulns = BUILTIN_CVE_DB_PHP.get(name.lower(), [])
     for constraint, cve_id, severity, fixed_version, desc in pkg_vulns:
@@ -489,3 +528,206 @@ def format_vulnerability(name: str, current_ver: str, vuln: dict) -> str:
         f"  ├─ {vuln['description']}\n"
         f"  └─ Fix: upgrade to {vuln['fixed_version']}"
     )
+
+
+# =====================================================================
+# OSV.dev 实时 CVE 更新与缓存
+# =====================================================================
+
+_CVE_CACHE = None  # 懒加载
+
+
+def _osv_query(pkg: str, osv_eco: str, timeout: int = 30) -> list[dict]:
+    """查询 OSV API 获取单个包的漏洞列表"""
+    import urllib.request
+    url = "https://api.osv.dev/v1/query"
+    payload = json.dumps(
+        {"package": {"name": pkg, "ecosystem": osv_eco}}
+    ).encode("utf-8")
+    req = urllib.request.Request(
+        url, data=payload, headers={"Content-Type": "application/json"}
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    return data.get("vulns", [])
+
+
+def _osv_severity(vuln: dict) -> str:
+    """从 OSV 漏洞对象提取严重度"""
+    db_specific = vuln.get("database_specific") or {}
+    sev = db_specific.get("severity")
+    if sev:
+        return sev.lower()
+    for s in vuln.get("severity") or []:
+        if "CVSS" in s.get("type", ""):
+            try:
+                score = float(s.get("score", "0"))
+                if score >= 9.0:
+                    return "critical"
+                if score >= 7.0:
+                    return "high"
+                if score >= 4.0:
+                    return "medium"
+                return "low"
+            except (ValueError, TypeError):
+                continue
+    return "medium"
+
+
+def _osv_ranges(vuln: dict) -> list[tuple[str, str]]:
+    """提取受影响版本范围 [(introduced, fixed), ...]"""
+    ranges = []
+    for affected in vuln.get("affected") or []:
+        for rng in affected.get("ranges") or []:
+            if rng.get("type") != "SEMVER":
+                continue
+            introduced, fixed = "0", ""
+            for event in rng.get("events") or []:
+                if "introduced" in event:
+                    introduced = event["introduced"]
+                if "fixed" in event:
+                    fixed = event["fixed"]
+            if fixed or introduced not in ("0", "0.0.0", ""):
+                ranges.append((introduced, fixed))
+    return ranges
+
+
+def _osv_to_entry(vuln: dict) -> Optional[dict]:
+    """将 OSV 漏洞对象转为缓存条目，无法匹配版本范围的返回 None"""
+    vuln_id = vuln.get("id", "")
+    aliases = vuln.get("aliases") or []
+    cve_id = next(
+        (a for a in aliases if a.upper().startswith("CVE")), vuln_id
+    )
+    ranges = _osv_ranges(vuln)
+    if not ranges:
+        return None
+    fixed_versions = sorted({f for _i, f in ranges if f})
+    fixed = fixed_versions[0] if fixed_versions else ""
+    summary = (vuln.get("summary") or vuln.get("details") or "")[:200]
+    return {
+        "cve_id": cve_id,
+        "severity": _osv_severity(vuln),
+        "fixed_version": fixed,
+        "summary": summary,
+        "ranges": [list(r) for r in ranges],
+    }
+
+
+def _version_in_range(version: str, introduced: str, fixed: str) -> bool:
+    """判断 version 是否落在 [introduced, fixed) 范围内"""
+    if introduced and introduced not in ("0", "0.0.0", ""):
+        if parse_version(version) < parse_version(introduced):
+            return False
+    if fixed and parse_version(version) >= parse_version(fixed):
+        return False
+    return True
+
+
+def update_cve_cache(cache_path: Optional[str] = None) -> dict:
+    """
+    从 OSV.dev 拉取内置包的最新漏洞并写入缓存文件。
+
+    Args:
+        cache_path: 缓存文件路径（默认 CVE_CACHE_DEFAULT）
+
+    Returns:
+        统计信息: {"total", "updated_packages", "failed"}
+    """
+    cache_path = cache_path or CVE_CACHE_DEFAULT
+
+    # 收集所有内置包
+    packages: dict[str, list[str]] = {}
+    for eco, db in (
+        ("python", BUILTIN_CVE_DB_PYTHON),
+        ("npm", BUILTIN_CVE_DB_NPM),
+        ("go", BUILTIN_CVE_DB_GO),
+        ("java", BUILTIN_CVE_DB_JAVA),
+        ("ruby", BUILTIN_CVE_DB_RUBY),
+        ("rust", BUILTIN_CVE_DB_RUST),
+        ("php", BUILTIN_CVE_DB_PHP),
+    ):
+        packages.setdefault(eco, []).extend(db.keys())
+
+    new_cache: dict[str, dict] = {}
+    stats: dict = {"total": 0, "updated_packages": 0, "failed": []}
+
+    for eco, pkgs in packages.items():
+        osv_eco = OSV_ECOSYSTEMS.get(eco, eco)
+        new_cache.setdefault(eco, {})
+        for pkg in pkgs:
+            try:
+                vulns = _osv_query(pkg, osv_eco)
+                entries = []
+                for v in vulns:
+                    ent = _osv_to_entry(v)
+                    if ent:
+                        entries.append(ent)
+                if entries:
+                    new_cache[eco][pkg.lower()] = entries
+                    stats["total"] += len(entries)
+                    stats["updated_packages"] += 1
+            except Exception as e:  # noqa: BLE001 — 网络/解析失败不中断
+                stats["failed"].append(f"{pkg}: {e}")
+
+    try:
+        with open(cache_path, "w", encoding="utf-8") as f:
+            json.dump(new_cache, f, indent=2, ensure_ascii=False)
+        stats["cache_file"] = cache_path
+    except OSError as e:
+        stats["failed"].append(f"write: {e}")
+
+    global _CVE_CACHE
+    _CVE_CACHE = new_cache
+
+    return stats
+
+
+def _load_cache(cache_path: Optional[str] = None) -> dict:
+    """加载 CVE 缓存（不存在或损坏时返回空 dict）"""
+    cache_path = cache_path or CVE_CACHE_DEFAULT
+    try:
+        with open(cache_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+
+
+def _get_cache() -> dict:
+    """懒加载缓存"""
+    global _CVE_CACHE
+    if _CVE_CACHE is None:
+        _CVE_CACHE = _load_cache()
+    return _CVE_CACHE
+
+
+def _cache_hits(name: str, version: str, eco: str) -> list[dict]:
+    """
+    在 OSV 缓存中查询包漏洞。
+
+    Args:
+        name: 包名
+        version: 版本号
+        eco: 生态 (python / npm / go / java / ruby / rust / php)
+
+    Returns:
+        匹配的漏洞列表；缓存不存在时返回 []（调用方回退内置库）
+    """
+    cache = _get_cache()
+    if not cache:
+        return []
+    entry = cache.get(eco, {}).get(name.lower())
+    if not entry:
+        return []
+    results = []
+    for vuln in entry:
+        for introduced, fixed in vuln.get("ranges", []):
+            if _version_in_range(version, introduced, fixed):
+                results.append({
+                    "cve_id": vuln["cve_id"],
+                    "severity": vuln["severity"],
+                    "fixed_version": vuln.get("fixed_version", ""),
+                    "description": vuln.get("summary", ""),
+                })
+                break
+    return results

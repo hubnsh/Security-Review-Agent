@@ -70,6 +70,12 @@ python engine.py --focus config
 # 自动应用修复
 python engine.py --apply all          # 全部
 python engine.py --apply 1,3,5        # 按编号
+
+# 更新 CVE 缓存（从 OSV.dev 拉取实时数据）
+python engine.py --update-cve
+
+# 禁用外部工具（仅内置引擎）
+python engine.py --no-external
 ```
 
 > json/markdown 模式下进度消息走 stderr，stdout 只含报告，适合 CI 管道。`--apply` 只修改有明确编辑方案（search/replacement）的可自动修复项，其余给出建议。
@@ -114,8 +120,9 @@ security-review/
 ├── tests/                   # 单元测试 (95+ 个)
 ├── models.py                # 数据模型
 ├── utils.py                 # 工具函数 (文件/规则/忽略)
+├── ast_scanner.py           # Python AST 污点分析 (标准库 ast) ★
 ├── sast_patterns.py         # 内置 SAST 模式库 (12 类型 × 9+ 语言) ★
-├── dependency_db.py         # 内置 CVE 数据库 (7 生态) ★
+├── dependency_db.py         # CVE 数据库 (7 生态) + OSV 实时缓存 ★
 ├── engine.py                # CLI 入口 ★
 ├── CI_CD_INTEGRATION.md     # CI/CD 集成文档
 └── requirements.txt         # 可选依赖
@@ -129,8 +136,9 @@ security-review/
 
 | 场景 | 首选方案 | 自动降级 |
 |------|---------|----------|
-| 依赖扫描 | pip-audit / npm audit | 内置 CVE 数据库 (`dependency_db.py`) |
-| SAST 扫描 | bandit / semgrep | 正则模式库 (`sast_patterns.py`) |
+| 依赖扫描 | pip-audit / npm audit | OSV 缓存 → 内置 CVE 数据库 |
+| SAST 扫描 (Python) | bandit | AST 污点分析 (`ast_scanner.py`) → 正则模式库 |
+| SAST 扫描 (其他语言) | semgrep | 正则模式库 (`sast_patterns.py`) |
 | YAML 解析 | PyYAML | 纯 Python 简易解析器 |
 
 无需安装任何外部工具即可运行基础扫描。安装可选工具可获得更准确的结果：
@@ -138,6 +146,10 @@ security-review/
 ```bash
 pip install -r requirements.txt
 ```
+
+**CVE 实时数据**：`python engine.py --update-cve` 从 [OSV.dev](https://osv.dev) 拉取内置包的最新漏洞到 `.cve-cache.json`（已 gitignore）。缓存存在时 `check_*` 函数优先使用实时数据，否则回退内置静态库。
+
+**Python AST 污点分析**：对 Python 代码自动执行基于标准库 `ast` 的分析——跟踪用户输入（`request.*`、`body` 等）是否流入危险函数，未受污染的调用不再误报，注释/字符串中的代码天然免疫。
 
 ---
 
