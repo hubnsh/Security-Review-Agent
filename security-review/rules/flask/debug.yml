@@ -1,0 +1,33 @@
+# rules/flask/debug.yml
+id: flask-debug-enabled
+name: Flask Debug Mode Enabled
+description: >
+  Flask application is running with debug mode enabled. This exposes
+  an interactive debugger in the browser, which can lead to remote
+  code execution if accessed by an attacker.
+severity: high
+cwe: CWE-489
+owasp: "A05:2021"
+languages: [python]
+frameworks: [flask]
+tags: [debug, flask, development]
+
+detect:
+  - type: regex_in_file
+    pattern: "app\\.run\\(.*debug\\s*=\\s*True"
+    exclude_paths:
+      - "**/venv/**"
+      - "**/.env/**"
+  - type: regex_in_file
+    pattern: "DEBUG\\s*=\\s*True"
+    exclude_paths:
+      - "**/venv/**"
+      - "**/.env/**"
+
+fix:
+  - type: edit
+    description: "Set debug=False for production"
+    effort: low
+  - type: edit
+    description: "Use environment variable to control debug mode"
+    effort: low

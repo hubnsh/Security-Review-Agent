@@ -259,6 +259,144 @@ def match_rule_condition(condition: dict, file_content: Optional[str]) -> bool:
     return False
 
 
+def compute_git_diff(ref: str, root_path: str) -> list[str]:
+    """
+    计算与指定 Git ref 相比有变更的文件列表。
+
+    git diff 从子目录运行时会输出仓库根相对路径（如 "sub/dir/file.py"），
+    因此先通过 rev-parse 获取仓库根，再把路径拼接到仓库根上。
+
+    Args:
+        ref: Git ref (如 "HEAD~1", "origin/main")
+        root_path: 项目根目录（可以是仓库内任意子目录）
+
+    Returns:
+        变更文件的绝对路径列表
+    """
+    import subprocess
+    try:
+        # 获取仓库根目录
+        root_result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, cwd=root_path,
+            timeout=30,
+        )
+        if root_result.returncode != 0:
+            return []
+        repo_root = root_result.stdout.strip()
+
+        result = subprocess.run(
+            ["git", "diff", ref, "--name-only"],
+            capture_output=True, text=True, cwd=root_path,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            return []
+        files = [f.strip() for f in result.stdout.split("\n") if f.strip()]
+        # 仓库根相对路径 → 绝对路径
+        return [os.path.abspath(os.path.join(repo_root, f)) for f in files]
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return []
+
+
+# =====================================================================
+# 假阳性管理 (.secreview-ignore)
+# =====================================================================
+
+# .secreview-ignore 文件格式:
+#
+#   每行一条忽略规则，支持三种格式：
+#   1. 精确路径+行号+规则:   src/main.py:42:django-csrf-disabled
+#   2. 路径通配+规则:        src/models/*:sast-sql-injection
+#   3. 全局规则忽略:         :::sast-hardcoded-credentials
+#   4. 注释行:               # 这是注释
+#   5. 空行跳过
+
+
+def load_ignore_rules(ignore_file_path: str) -> list[dict]:
+    """
+    加载 .secreview-ignore 忽略规则文件。
+
+    Args:
+        ignore_file_path: 忽略文件路径
+
+    Returns:
+        List of {"file_pattern": str, "line": int|None,
+                 "rule_pattern": str, "raw": str}
+    """
+    rules = []
+    try:
+        with open(ignore_file_path, "r", encoding="utf-8") as f:
+            for line in f:
+                stripped = line.strip()
+                if not stripped or stripped.startswith("#"):
+                    continue
+
+                # 解析 file:line:rule 格式
+                parts = stripped.split(":", 2)
+                file_pattern = parts[0].strip() if len(parts) > 0 else ""
+                line_str = parts[1].strip() if len(parts) > 1 else ""
+                raw_rule = parts[2].strip() if len(parts) > 2 else ""
+
+                # 处理 src/models/*:::sast-sql-injection 的情况
+                # 空 line 字段导致 rule 带前导冒号
+                if raw_rule.startswith(":"):
+                    raw_rule = raw_rule[1:]
+
+                line_num = None
+                if line_str and line_str.isdigit():
+                    line_num = int(line_str)
+
+                rules.append({
+                    "file_pattern": file_pattern or "*",
+                    "line": line_num,
+                    "rule_pattern": raw_rule or "*",
+                    "raw": stripped,
+                })
+    except (FileNotFoundError, PermissionError):
+        pass
+
+    return rules
+
+
+def is_ignored(file_path: str, line: int, rule_id: str,
+               ignore_rules: list[dict]) -> bool:
+    """
+    检查某个 Finding 是否匹配忽略规则。
+
+    Args:
+        file_path: 文件路径（相对于项目根）
+        line: 行号
+        rule_id: 规则 ID
+        ignore_rules: 从 load_ignore_rules() 加载的规则列表
+
+    Returns:
+        True 表示应忽略
+    """
+    import fnmatch
+
+    for rule in ignore_rules:
+        fp = rule.get("file_pattern", "*")
+        rp = rule.get("rule_pattern", "*")
+        rl = rule.get("line")
+
+        # 文件匹配
+        if not fnmatch.fnmatch(file_path.replace("\\", "/"), fp):
+            continue
+
+        # 规则 ID 匹配
+        if not fnmatch.fnmatch(rule_id, rp):
+            continue
+
+        # 行号匹配（如果指定了行号）
+        if rl is not None and rl != line:
+            continue
+
+        return True
+
+    return False
+
+
 def generate_fix_operations(rule: dict, file_path: str, original_content: str) -> list[dict]:
     """
     根据规则的 fix 定义生成 EditOperation。

@@ -16,6 +16,33 @@ tools: Read, Glob, Grep, Bash
 从 Phase 1 的 ProbeResult 获取项目使用的语言。
 如果无 Phase 1 输入，自行用 Glob 统计文件后缀。
 
+### Step 1.5: 尝试 semgrep（增强，多语言）
+
+如果已安装 semgrep，对非 Python 语言（JS/TS/Go/Java）执行：
+
+```bash
+# 检查 semgrep
+semgrep --version 2>/dev/null
+
+# 执行默认规则扫描
+semgrep scan --config auto --json 2>/dev/null
+# 或使用 p/default 规则集
+semgrep scan --config p/owasp-top-ten --json 2>/dev/null
+```
+
+解析 semgrep JSON 输出 `results[]`，映射为 Finding：
+
+| semgrep check_id 片段 | 漏洞类型 | 严重度 |
+|----------------------|----------|--------|
+| `sql-injection` | SQL 注入 | CRITICAL |
+| `command-injection` | 命令注入 | CRITICAL |
+| `xss` | XSS | HIGH |
+| `path-traversal` | 路径遍历 | HIGH |
+| `ssrf` | SSRF | HIGH |
+| `deserialization` | 反序列化 | CRITICAL |
+
+> semgrep 不可用时，跳过并继续使用 bandit / 内置模式。semgrep 结果与内置模式结果去重后合并。
+
 ### Step 2: 尝试 bandit（首选，仅 Python）
 
 ```bash

@@ -1,0 +1,38 @@
+# rules/express/helmet.yml
+id: express-helmet-missing
+name: Helmet Middleware Missing
+description: >
+  Helmet helps secure Express apps by setting various HTTP headers.
+  Without it, the app may be vulnerable to clickjacking, XSS, and
+  other header-based attacks.
+severity: high
+cwe: CWE-1021
+owasp: "A05:2021"
+languages: [javascript, typescript]
+frameworks: [express]
+tags: [helmet, headers, express]
+
+detect:
+  - type: regex_in_file
+    pattern: "require\\(['\"]express['\"]\\)"
+    exclude_paths:
+      - "**/node_modules/**"
+  - type: line_not_matches
+    path: "**/app.js"
+    pattern: "helmet"
+  - type: line_not_matches
+    path: "**/server.js"
+    pattern: "helmet"
+  - type: line_not_matches
+    path: "**/index.js"
+    pattern: "helmet"
+
+fix:
+  - type: edit
+    description: "Install and use Helmet middleware"
+    effort: low
+  - type: insert_after
+    file: "**/app.js"
+    anchor: "express\\(\\)"
+    text: "app.use(helmet());"
+    effort: low

@@ -32,14 +32,6 @@ SAST_PATTERNS = {
             (r"sequelize\.query\(\s*[\"'].*\+",
              "Sequelize raw query with concatenation"),
         ],
-        "go": [
-            (r"\.Raw\(\s*f[\"']",
-             "GORM raw query with f-string (SQLi)"),
-            (r"\.Exec\(\s*f[\"']",
-             "SQL Exec with f-string (SQLi)"),
-            (r"db\.Query\(\s*[\"'].*\+",
-             "database/sql Query with concatenation"),
-        ],
         "java": [
             (r"Statement\.executeQuery\(\s*[\"']",
              "Raw Statement usage (use PreparedStatement)"),
@@ -71,6 +63,21 @@ SAST_PATTERNS = {
              "ASP.NET request parameter in string concatenation"),
             (r"ExecuteQuery\(\s*[\"'].*\+",
              "LINQ ExecuteQuery with concatenation"),
+        ],
+        "php": [
+            (r"mysqli_query\(\s*[\"'].*\$",
+             "mysqli_query with variable interpolation (SQLi)"),
+            (r"query\(\s*[\"'].*\$",
+             "PDO query with variable interpolation (SQLi)"),
+            (r"\$wpdb->query\(\s*[\"'].*\$",
+             "WordPress $wpdb->query with variable (SQLi)"),
+            (r"\$wpdb->get_results\(\s*[\"'].*\$",
+             "WordPress $wpdb->get_results with variable (SQLi)"),
+        ],
+        "kotlin": [
+            (r"Squery\s*\(", "Exposed SQL query building (potential SQLi)"),
+            (r"rawQuery\s*\(", "Android rawQuery (SQLi)"),
+            (r"execSQL\s*\(", "Android execSQL (SQLi)"),
         ],
     },
 
@@ -125,6 +132,13 @@ SAST_PATTERNS = {
         "csharp": [
             (r"Process\.Start\(\s*[\"'].*\+",
              "Process.Start with string concatenation"),
+        ],
+        "php": [
+            (r"exec\(\s*[\"'].*\$", "exec() with variable (command injection)"),
+            (r"system\(\s*[\"'].*\$", "system() with variable (command injection)"),
+            (r"shell_exec\(\s*[\"'].*\$", "shell_exec() with variable (command injection)"),
+            (r"passthru\(\s*[\"'].*\$", "passthru() with variable (command injection)"),
+            (r"`\s*\$", "Backtick execution with variable (command injection)"),
         ],
     },
 
@@ -338,6 +352,28 @@ SAST_PATTERNS = {
     },
 
     # =====================================================================
+    # 不安全的随机数 (Insecure Random)
+    # =====================================================================
+    "insecure-random": {
+        "javascript": [
+            (r"Math\.random\s*\(",
+             "Math.random() is not cryptographically secure — verify it's not used for tokens/keys"),
+        ],
+        "python": [
+            (r"import\s+random\b",
+             "Python 'random' module is not cryptographically secure — use secrets module"),
+            (r"random\.random\s*\(\s*\).*token|token.*random\.random",
+             "random.random() used near token generation (should use secrets.token_*)"),
+        ],
+        "java": [
+            (r"new\s+Random\s*\(\)\s*.*(?:password|token|salt|secret)",
+             "java.util.Random is not cryptographically secure — use SecureRandom"),
+            (r"Math\.random\s*\(\s*\).*(?:password|token|salt|secret)",
+             "Math.random() used in security context — use SecureRandom"),
+        ],
+    },
+
+    # =====================================================================
     # 弱 TLS/HTTPS 配置
     # =====================================================================
     "weak-tls": {
@@ -386,9 +422,109 @@ def get_all_vuln_types() -> list[str]:
     return list(SAST_PATTERNS.keys())
 
 
+def _strip_line_comments(line: str, language: str) -> str:
+    """
+    去除行中的注释部分，返回空白填充的字符串以保持行号对齐。
+
+    Args:
+        line: 单行代码
+        language: 语言名
+
+    Returns:
+        注释被替换为等长空格的字符串
+    """
+    if language == "python":
+        # Python: # 注释
+        idx = _find_unquoted(line, "#")
+        if idx >= 0:
+            return line[:idx] + " " * (len(line) - idx)
+    elif language in ("javascript", "typescript", "go", "java", "csharp", "php", "rust"):
+        # 先处理 // 注释
+        idx = _find_unquoted(line, "//")
+        if idx >= 0:
+            return line[:idx] + " " * (len(line) - idx)
+    elif language == "ruby":
+        idx = _find_unquoted(line, "#")
+        if idx >= 0:
+            return line[:idx] + " " * (len(line) - idx)
+    elif language in ("c", "cpp", "swift", "kotlin"):
+        idx = _find_unquoted(line, "//")
+        if idx >= 0:
+            return line[:idx] + " " * (len(line) - idx)
+    return line
+
+
+def _find_unquoted(line: str, marker: str) -> int:
+    """
+    在字符串中查找不在引号内的标记。
+
+    Args:
+        line: 代码行
+        marker: 要查找的标记（如 "#" 或 "//"）
+
+    Returns:
+        标记位置，-1 表示未找到或全在引号内
+    """
+    in_single = False
+    in_double = False
+    i = 0
+    while i < len(line):
+        ch = line[i]
+        if ch == "'" and not in_double and (i == 0 or line[i - 1] != '\\'):
+            in_single = not in_single
+        elif ch == '"' and not in_single and (i == 0 or line[i - 1] != '\\'):
+            in_double = not in_double
+        elif not in_single and not in_double:
+            if line[i:].startswith(marker):
+                return i
+        i += 1
+    return -1
+
+
+def _strip_block_comments(content: str, language: str) -> str:
+    """
+    去除块级注释（如 /* ... */）。
+
+    Args:
+        content: 文件内容
+        language: 语言名
+
+    Returns:
+        块注释被替换为等长空格的字符串
+    """
+    languages_with_block_comments = {
+        "javascript", "typescript", "go", "java", "csharp",
+        "php", "rust", "c", "cpp", "swift", "kotlin", "ruby",
+    }
+    if language not in languages_with_block_comments:
+        return content
+
+    result = list(content)
+    i = 0
+    while i < len(content) - 1:
+        # 不在引号内时才检查
+        if content[i] == '/' and content[i + 1] == '*':
+            # 确认不在引号内
+            prefix = content[:i]
+            if prefix.count('"') % 2 == 0 and prefix.count("'") % 2 == 0:
+                end = content.find("*/", i + 2)
+                if end >= 0:
+                    for j in range(i, end + 2):
+                        if content[j] not in ('\n', '\r'):
+                            result[j] = ' '
+                    i = end + 2
+                    continue
+        i += 1
+    return ''.join(result)
+
+
 def match_in_content(content: str, language: str) -> list[dict]:
     """
     对一段代码内容执行所有 SAST 模式匹配。
+
+    预处理：
+    1. 去除块级注释（/* ... */）
+    2. 按行去除行注释（# 或 //）
 
     Args:
         content: 文件内容
@@ -400,12 +536,31 @@ def match_in_content(content: str, language: str) -> list[dict]:
     import re
     results = []
 
+    # 预处理：去除块级注释
+    clean_content = _strip_block_comments(content, language)
+
     for vuln_type in SAST_PATTERNS:
         patterns = get_patterns_for_language(vuln_type, language)
         for regex, description in patterns:
-            for match in re.finditer(regex, content):
+            for match in re.finditer(regex, clean_content):
                 # 计算行号
                 line_num = content[:match.start()].count('\n') + 1
+
+                # 获取匹配所在的原始行内容
+                lines = content.split('\n')
+                orig_line = lines[line_num - 1] if line_num - 1 < len(lines) else ""
+
+                # 进一步检查该行是否在注释中
+                cleaned_line = _strip_line_comments(orig_line, language).strip()
+                if not cleaned_line:
+                    continue  # 匹配在注释中，跳过
+
+                # 检查匹配位置是否在去注释后仍然有效
+                clean_lines = clean_content.split('\n')
+                clean_line = clean_lines[line_num - 1] if line_num - 1 < len(clean_lines) else ""
+                if match.group() not in clean_line:
+                    continue  # 匹配在注释中，跳过
+
                 results.append({
                     "vuln_type": vuln_type,
                     "pattern": regex,

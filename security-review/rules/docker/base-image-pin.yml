@@ -1,0 +1,27 @@
+# rules/docker/base-image-pin.yml
+id: docker-base-image-unpinned
+name: Base Image Tag Not Pinned
+description: >
+  The Docker base image uses a floating tag (latest, or a major.minor tag)
+  instead of a pinned digest or exact version. Floating tags can change
+  underneath builds, introducing unverified code into the image.
+severity: medium
+cwe: CWE-829
+owasp: "A06:2021"
+languages: []
+tags: [docker, image, supply-chain]
+
+detect:
+  - type: regex_in_file
+    path: "**/Dockerfile*"
+    pattern: "FROM\\s+[^\\s]+:(latest|\\d+|stable|alpine|slim)\\b"
+    exclude_paths:
+      - "**/node_modules/**"
+
+fix:
+  - type: edit
+    description: "Pin the base image to an exact version or SHA digest"
+    effort: low
+  - type: edit
+    description: "Use digest pinning: FROM image@sha256:..."
+    effort: low

@@ -1,0 +1,32 @@
+# rules/terraform/s3-public-bucket.yml
+id: terraform-s3-public-bucket
+name: S3 Bucket Publicly Accessible
+description: >
+  Terraform S3 bucket has a public ACL or public access block disabled.
+  This exposes bucket contents to the public internet, potentially leaking
+  sensitive data.
+severity: high
+cwe: CWE-200
+owasp: "A01:2021"
+languages: []
+frameworks: []
+tags: [terraform, s3, iac]
+
+detect:
+  - type: regex_in_file
+    path: "**/*.tf"
+    pattern: "acl\\s*=\\s*\"(public-read|public-read-write)\""
+  - type: regex_in_file
+    path: "**/*.tf"
+    pattern: "block_public_acls\\s*=\\s*false"
+  - type: regex_in_file
+    path: "**/*.tf"
+    pattern: "ignore_public_acls\\s*=\\s*false"
+
+fix:
+  - type: edit
+    description: "Remove public ACL or set bucket_policy to deny public access"
+    effort: low
+  - type: edit
+    description: "Set block_public_acls = true and restrict access"
+    effort: low

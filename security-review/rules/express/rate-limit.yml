@@ -1,0 +1,29 @@
+# rules/express/rate-limit.yml
+id: express-rate-limit-missing
+name: Rate Limiting Not Configured
+description: >
+  Express app does not appear to use express-rate-limit middleware.
+  Without rate limiting, the application is vulnerable to brute-force
+  and denial-of-service attacks.
+severity: medium
+cwe: CWE-770
+owasp: "A04:2021"
+languages: [javascript, typescript]
+frameworks: [express]
+tags: [rate-limit, express, dos]
+
+detect:
+  - type: file_contains
+    path: "**/package.json"
+    pattern: "express"
+  - type: file_not_contains
+    path: "**/package.json"
+    pattern: "express-rate-limit"
+
+fix:
+  - type: edit
+    description: "Add express-rate-limit to package.json dependencies"
+    effort: low
+  - type: edit
+    description: "Configure rate limiter in app.js"
+    effort: medium

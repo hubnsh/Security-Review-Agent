@@ -51,6 +51,8 @@ description: 安全审查 Agent - 扫描项目依赖/配置/代码/认证/业务
 
 根据 Phase 1 输出的 `rules_to_load` 和用户 CLI 参数（`--focus`），选择要运行的扫描维度。
 
+**增量模式（`--diff REF`）**：先运行 `git diff REF --name-only` 获取变更文件列表，将变更文件列表作为 `changed_files` 传给所有扫描 Agent，**要求每个 Agent 只扫描变更文件**（跳过未变更文件）。若 git 不可用则回退全量扫描并提示用户。
+
 **全量扫描时并行启动 5 个 Agent：**
 
 | Agent | 输入 | 工具依赖 | 说明 |

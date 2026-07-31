@@ -1,0 +1,37 @@
+# rules/django/file-upload.yml
+id: django-file-upload-unrestricted
+name: File Upload Not Restricted
+description: >
+  Django file upload settings are not configured. Without
+  FILE_UPLOAD_MAX_MEMORY_SIZE / DATA_UPLOAD_MAX_MEMORY_SIZE limits and
+  content-type validation, attackers can upload oversized or malicious
+  files, causing DoS or serving dangerous content.
+severity: medium
+cwe: CWE-434
+owasp: "A03:2021"
+languages: [python]
+frameworks: [django]
+tags: [file-upload, django, dos]
+
+detect:
+  - type: file_contains
+    path: "**/settings.py"
+    pattern: "INSTALLED_APPS"
+  - type: file_not_contains
+    path: "**/settings.py"
+    pattern: "FILE_UPLOAD_MAX_MEMORY_SIZE"
+  - type: file_not_contains
+    path: "**/settings.py"
+    pattern: "DATA_UPLOAD_MAX_MEMORY_SIZE"
+
+fix:
+  - type: insert
+    description: "Add file upload size limits to settings.py"
+    effort: low
+    text: |
+      # 限制上传大小
+      FILE_UPLOAD_MAX_MEMORY_SIZE = 5 * 1024 * 1024   # 5 MB
+      DATA_UPLOAD_MAX_MEMORY_SIZE = 5 * 1024 * 1024   # 5 MB
+  - type: edit
+    description: "Validate file types and extensions in upload views"
+    effort: medium

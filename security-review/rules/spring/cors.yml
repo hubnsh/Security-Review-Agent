@@ -1,0 +1,24 @@
+# rules/spring/cors.yml
+id: spring-cors-global-allow
+name: Spring CORS Global Allowed Origins Wildcard
+description: >
+  Spring Boot application allows all origins via CORS configuration.
+  This can lead to unauthorized data access from any domain.
+severity: high
+cwe: CWE-942
+owasp: "A01:2021"
+languages: [java]
+frameworks: [spring]
+tags: [cors, spring, allowedOrigins]
+
+detect:
+  - type: regex_in_file
+    pattern: "\\.allowedOrigins\\(\\s*\"\\*\"\\s*\\)"
+    exclude_paths:
+      - "**/test/**"
+      - "**/*Test*"
+
+fix:
+  - type: edit
+    description: "Restrict allowedOrigins to specific domains"
+    effort: low

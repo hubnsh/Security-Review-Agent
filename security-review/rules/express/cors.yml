@@ -1,0 +1,26 @@
+# rules/express/cors.yml
+id: express-cors-wildcard
+name: CORS Wildcard Origin
+description: >
+  CORS configured with wildcard origin ('*') allows any website to make
+  cross-origin requests to the API. This can lead to data exfiltration
+  and CSRF-style attacks in browser contexts.
+severity: high
+cwe: CWE-942
+owasp: "A01:2021"
+languages: [javascript, typescript]
+frameworks: [express]
+tags: [cors, express, origin]
+
+detect:
+  - type: regex_in_file
+    pattern: "cors\\(\\s*\\{\\s*origin\\s*:\\s*['\"]\\*['\"]"
+    exclude_paths:
+      - "**/node_modules/**"
+
+fix:
+  - type: edit
+    description: "Restrict CORS origin to specific domains instead of wildcard"
+    effort: low
+    search: "origin: '*'"
+    replacement: "origin: process.env.CORS_ORIGIN || 'https://example.com'"

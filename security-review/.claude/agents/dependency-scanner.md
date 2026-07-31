@@ -104,6 +104,43 @@ npm audit JSON 格式：
 #### 3b: 降级模式
 读取 `package.json` 的 `dependencies` 字段，使用 `dependency_db.py` 匹配。
 
+### Step 3.5: Go 依赖扫描
+
+```bash
+# 尝试 govulncheck（可选）
+govulncheck ./... 2>/dev/null
+```
+
+降级模式：读取 `go.mod` 的 require 块，用 `dependency_db.py` 匹配：
+
+```python
+from dependency_db import check_go_package
+results = check_go_package("golang.org/x/crypto", "0.30.0")
+```
+
+### Step 3.6: Ruby / Rust / PHP 依赖扫描
+
+使用内置 CVE 数据库逐个匹配（无外部工具依赖）：
+
+```python
+from dependency_db import (
+    check_bundler_package,   # Ruby
+    check_cargo_package,     # Rust
+    check_composer_package,  # PHP
+)
+
+# Ruby: 解析 Gemfile 中的 gem 'name', 'version'
+check_bundler_package("rack", "3.1.0")
+
+# Rust: 解析 Cargo.toml [dependencies] 中的 name = { version = "x" }
+check_cargo_package("tonic", "0.11.0")
+
+# PHP: 解析 composer.json require/require-dev 中的 "name": "^version"
+check_composer_package("phpseclib", "3.0.20")
+```
+
+> 如果安装了 `bundler-audit` / `cargo-audit` / `composer audit`，优先调用它们获取完整 CVE 数据；不可用时按上述内置库降级。
+
 ### Step 4: 映射到 Finding 格式
 
 pip-audit 的每个 `vuln` 映射为：

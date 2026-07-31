@@ -30,6 +30,13 @@ detect:
 fix:
   - type: edit
     description: "Set DEBUG=False / NODE_ENV=production in production config"
+    search: 'DEBUG\s*[=:]\s*True'
+    replacement: "DEBUG = os.getenv('DJANGO_DEBUG', 'False') == 'True'"
+    effort: low
+  - type: edit
+    description: "直接关闭 Debug 模式"
+    search: 'DEBUG\s*[=:]\s*True'
+    replacement: "DEBUG = False"
     effort: low
   - type: config
     description: "Use environment variable to control debug mode (e.g., DEBUG=os.getenv('DEBUG', 'False') == 'True')"

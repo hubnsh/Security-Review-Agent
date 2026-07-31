@@ -1,0 +1,28 @@
+# rules/terraform/db-encryption.yml
+id: terraform-db-unencrypted
+name: Database Encryption Disabled
+description: >
+  Database resources are created without encryption enabled. Sensitive
+  data at rest should always be encrypted.
+severity: high
+cwe: CWE-311
+owasp: "A02:2021"
+languages: []
+frameworks: []
+tags: [terraform, database, encryption]
+
+detect:
+  - type: regex_in_file
+    path: "**/*.tf"
+    pattern: "resource\\s+\"(aws_rds_cluster|aws_db_instance|azurerm_mysql_server|azurerm_postgresql_server)\""
+  - type: line_not_matches
+    path: "**/*.tf"
+    pattern: "storage_encrypted\\s*=\\s*true"
+  - type: line_not_matches
+    path: "**/*.tf"
+    pattern: "encrypted\\s*=\\s*true"
+
+fix:
+  - type: edit
+    description: "Enable storage_encrypted = true on database resources"
+    effort: low

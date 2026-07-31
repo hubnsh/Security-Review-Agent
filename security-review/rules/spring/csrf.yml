@@ -1,0 +1,24 @@
+# rules/spring/csrf.yml
+id: spring-csrf-disabled
+name: Spring CSRF Protection Disabled
+description: >
+  CSRF protection has been explicitly disabled in Spring Security
+  configuration. This leaves the application vulnerable to
+  Cross-Site Request Forgery attacks.
+severity: critical
+cwe: CWE-352
+owasp: "A01:2021"
+languages: [java]
+frameworks: [spring]
+tags: [csrf, spring-security]
+
+detect:
+  - type: regex_in_file
+    pattern: "\\.csrf\\(\\)\\.disable\\(\\)"
+    exclude_paths:
+      - "**/test/**"
+
+fix:
+  - type: edit
+    description: "Enable CSRF protection in SecurityConfig"
+    effort: medium

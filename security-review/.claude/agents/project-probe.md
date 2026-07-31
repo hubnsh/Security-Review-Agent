@@ -147,11 +147,12 @@ for lang in languages:
     if lang in language_map:
         rules.append(language_map[lang])
 
-# 按框架
+# 按框架 — 加载框架特定规则目录
 framework_map = {
-    "django": "django", "flask": "python", "fastapi": "python",
-    "express": "express", "react": "javascript",
-    "spring": "java", "rails": "ruby", "laravel": "php",
+    "django": "django", "flask": "flask", "fastapi": "python",
+    "express": "express", "react": "javascript", "vue": "javascript",
+    "nextjs": "javascript", "nestjs": "javascript",
+    "spring": "spring", "rails": "ruby", "laravel": "php",
 }
 for framework in frameworks:
     if framework in framework_map:
@@ -164,6 +165,8 @@ if has_cicd:
     rules.append("cicd")
 if has_k8s:
     rules.append("k8s")
+if has_terraform:
+    rules.append("terraform")
 
 # 去重
 rules = list(dict.fromkeys(rules))
@@ -179,6 +182,7 @@ rules = list(dict.fromkeys(rules))
   "has_dockerfile": true,
   "has_cicd": true,
   "has_k8s": false,
+  "has_terraform": false,
   "config_files": {
     "settings.py": "**/settings.py",
     "requirements.txt": "**/requirements.txt",
@@ -188,5 +192,11 @@ rules = list(dict.fromkeys(rules))
   "rules_to_load": ["base", "python", "django", "javascript", "docker", "cicd"]
 }
 ```
+
+**标志位检测规则**：
+- `has_dockerfile` = 发现 `**/Dockerfile*` 或 `**/docker-compose*.{yml,yaml}`
+- `has_cicd` = 发现 `**/.github/workflows/*.{yml,yaml}`、`**/.gitlab-ci.yml`、`**/Jenkinsfile`、`**/.circleci/config.yml`
+- `has_k8s` = 发现 `**/*.k8s.{yml,yaml}`、`**/*.deployment.{yml,yaml}`、`**/kustomization.yml`、`**/Chart.yaml`
+- `has_terraform` = 发现 `**/*.tf` 或 `**/*.tfvars`
 
 即使未发现任何已知框架，也返回基本探测信息（仅加载 `base/` 规则）。
