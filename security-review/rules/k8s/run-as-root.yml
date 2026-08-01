@@ -1,0 +1,28 @@
+# rules/k8s/run-as-root.yml
+id: k8s-run-as-root
+name: Container Not Running as Non-Root
+description: >
+  Pod does not specify a non-root user or securityContext. Containers
+  running as root increase the blast radius of a breakout.
+severity: medium
+cwe: CWE-250
+owasp: "A05:2021"
+languages: []
+frameworks: []
+tags: [k8s, pod, security-context, root]
+
+detect:
+  - type: file_contains
+    path: "**/*.k8s.{yml,yaml}"
+    pattern: "containers"
+  - type: file_not_contains
+    path: "**/*.k8s.{yml,yaml}"
+    pattern: "runAsNonRoot"
+  - type: file_not_contains
+    path: "**/*.k8s.{yml,yaml}"
+    pattern: "securityContext"
+
+fix:
+  - type: edit
+    description: "Add securityContext with runAsNonRoot: true and runAsUser"
+    effort: low

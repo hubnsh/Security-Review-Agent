@@ -1,0 +1,32 @@
+# rules/base/registration-rate-limit.yml
+id: registration-without-rate-limit
+name: Registration Endpoint Without Rate Limiting
+description: >
+  Registration endpoints without rate limiting allow attackers to create
+  accounts in bulk, enabling spam, credential stuffing, and resource
+  exhaustion.
+severity: medium
+cwe: CWE-770
+owasp: "A04:2021"
+languages: [python, javascript, typescript, go, java, ruby, php]
+frameworks: []
+tags: [registration, rate-limit, brute-force]
+
+detect:
+  - type: regex_in_file
+    pattern: "def\\s+(register|signup|sign_up)\\s*\\("
+    exclude_paths:
+      - "**/migrations/**"
+      - "**/test*/**"
+  - type: regex_in_file
+    pattern: "(?:register|signup|sign_up)\\s*=\\s*(?:async\\s*)?(?:function|\\()"
+    exclude_paths:
+      - "**/node_modules/**"
+
+fix:
+  - type: edit
+    description: "Add rate limiting to registration endpoints"
+    effort: low
+  - type: edit
+    description: "Add CAPTCHA for public registration forms"
+    effort: medium

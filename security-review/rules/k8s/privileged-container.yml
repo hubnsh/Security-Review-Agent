@@ -1,0 +1,25 @@
+# rules/k8s/privileged-container.yml
+id: k8s-privileged-container
+name: Container Running in Privileged Mode
+description: >
+  Pod runs containers with privileged: true, granting access to all host
+  devices and capabilities. A compromised container can break out to the
+  host.
+severity: high
+cwe: CWE-250
+owasp: "A05:2021"
+languages: []
+frameworks: []
+tags: [k8s, pod, privileged, container]
+
+detect:
+  - type: regex_in_file
+    path: "**/*.{yml,yaml}"
+    pattern: "privileged\\s*:\\s*true"
+    exclude_paths:
+      - "**/node_modules/**"
+
+fix:
+  - type: edit
+    description: "Remove privileged: true; use specific capabilities instead"
+    effort: medium

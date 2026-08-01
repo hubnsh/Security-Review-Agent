@@ -1,0 +1,31 @@
+# rules/django/session-fixation.yml
+id: django-session-fixation
+name: Session Fixation Risk on Login
+description: >
+  Login handlers that do not rotate the session key (via
+  request.session.cycle_key() or login() helper) may allow an attacker
+  to fixate a session ID before the user authenticates.
+severity: medium
+cwe: CWE-384
+owasp: "A07:2021"
+languages: [python]
+frameworks: [django]
+tags: [session, fixation, django, login]
+
+detect:
+  - type: regex_in_file
+    pattern: "def\\s+login\\s*\\("
+    exclude_paths:
+      - "**/migrations/**"
+  - type: regex_in_file
+    pattern: "django\\.contrib\\.auth\\.login\\s*\\("
+    exclude_paths:
+      - "**/migrations/**"
+
+fix:
+  - type: edit
+    description: "Use Django's login() helper which rotates the session key"
+    effort: low
+  - type: edit
+    description: "Call request.session.cycle_key() after authentication"
+    effort: low

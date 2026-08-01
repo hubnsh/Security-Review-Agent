@@ -1,0 +1,34 @@
+# rules/base/jwt-no-expiry.yml
+id: jwt-no-expiry
+name: JWT Token Without Expiration
+description: >
+  JWT tokens are signed without an expiration (exp) claim, or with a very
+  long lifetime. Tokens that never expire remain valid indefinitely after
+  they are compromised.
+severity: high
+cwe: CWE-613
+owasp: "A07:2021"
+languages: [python, javascript, typescript, go, java, ruby]
+frameworks: []
+tags: [jwt, token, session]
+
+detect:
+  - type: regex_in_file
+    pattern: "jwt\\.(sign|encode)\\s*\\([^)]*(?!expiresIn|exp)(?![^)]*exp\\s*:)"
+    exclude_paths:
+      - "**/node_modules/**"
+      - "**/venv/**"
+      - "**/test*/**"
+      - "**/spec/**"
+  - type: regex_in_file
+    pattern: "expiresIn\\s*[:=]\\s*['\"]?(?:365|999|10000)\\s*['\"]?"
+    exclude_paths:
+      - "**/node_modules/**"
+
+fix:
+  - type: edit
+    description: "Add an expiration claim to JWT tokens (exp or expiresIn)"
+    effort: low
+  - type: edit
+    description: "Use short-lived access tokens (e.g., 15min) with refresh tokens"
+    effort: medium

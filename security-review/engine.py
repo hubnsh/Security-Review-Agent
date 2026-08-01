@@ -1541,13 +1541,10 @@ def aggregate_findings(all_findings: list[list[Finding]],
             ):
                 continue
 
-            # 去重 key：
-            # - config: 按 (file, line) 折叠跨规则重复检测（如 base+django 都报 DEBUG）
-            # - 其他维度: 按完整规则 id 区分，避免同文件不同问题互相吞掉
-            if f.dimension == ScanDimension.CONFIG:
-                key = (f.file_path, f.line or 0, "config")
-            else:
-                key = (f.file_path, f.line or 0, f.dimension.value, f.id)
+            # 去重 key：全部维度按完整规则 id 区分。
+            # 注意：不能用 (file, line) 折叠 config——缺失类检查都在 line 1，
+            # 会把 CSRF/SSL/会话 Cookie 等不同问题误合并。
+            key = (f.file_path, f.line or 0, f.dimension.value, f.id)
             if key in seen:
                 continue
             seen.add(key)
