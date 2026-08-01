@@ -1,5 +1,7 @@
 # 🔒 Security Review Agent — 详细设计说明书
 
+> **⚠️ 已归档（2026-08-01）** — 早期设计稿，架构描述与实际实现（Claude Agent 编排 + `engine.py`）已脱节，仅作历史参考。实际能力见 [security-review/README.md](security-review/README.md)。
+
 > **版本**：v1.0  
 > **日期**：2026-07-27  
 > **状态**：定稿  

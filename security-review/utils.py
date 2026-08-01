@@ -42,9 +42,21 @@ def read_file_content(file_path: str, max_bytes: int = 1_048_576) -> Optional[st
         return None
 
 
+# glob 结果缓存（同一进程内避免重复遍历文件树）
+_GLOB_CACHE: dict[tuple, list[str]] = {}
+
+
+def clear_glob_cache() -> None:
+    """清空 glob 缓存（扫描开始时调用）"""
+    _GLOB_CACHE.clear()
+
+
 def glob_files(root_dir: str, pattern: str) -> list[str]:
     """
     使用 glob 模式匹配文件。兼容 Windows/Linux。
+
+    带进程内缓存：同一 (root, pattern) 只遍历一次文件树，
+    多个扫描器共享探针的文件清单，减少重复 I/O。
 
     Args:
         root_dir: 根目录
@@ -54,8 +66,13 @@ def glob_files(root_dir: str, pattern: str) -> list[str]:
         匹配的文件路径列表
     """
     from glob import iglob
+    key = (os.path.abspath(root_dir), pattern)
+    if key in _GLOB_CACHE:
+        return _GLOB_CACHE[key]
     full_pattern = os.path.join(root_dir, pattern)
-    return list(iglob(full_pattern, recursive=True))
+    result = list(iglob(full_pattern, recursive=True))
+    _GLOB_CACHE[key] = result
+    return result
 
 
 PYTHON_INDICATORS = {

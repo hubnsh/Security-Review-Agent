@@ -135,6 +135,51 @@ description: 安全审查 Agent - 扫描项目依赖/配置/代码/认证/业务
 
 ---
 
+## 输出 Schema 约定
+
+各扫描 Agent 必须输出符合以下 Schema 的 JSON，聚合器据此校验：
+
+```json
+{
+  "findings": [
+    {
+      "id": "config-django-csrf",          // 必填: {dimension}-{rule_id}
+      "dimension": "config",               // 必填: config/dependency/sast/auth/business
+      "severity": "critical",              // 必填: critical/high/medium/low/info
+      "title": "CSRF Middleware Disabled", // 必填
+      "description": "...",                // 必填
+      "cwe": "CWE-352",                    // 可选
+      "owasp": "A01:2021",                 // 可选
+      "file_path": "settings.py",          // 可选（依赖/配置类必填）
+      "line": 33,                          // 可选（整数）
+      "code_snippet": "...",               // 可选
+      "attack_scenario": "...",            // 可选
+      "fixes": [                           // 可选
+        {
+          "description": "...",
+          "type": "edit",                  // edit/config/env_var/architectural
+          "effort": "low",                 // low/medium/high
+          "edit_operations": [
+            {"file": "settings.py", "old_string": "...", "new_string": "..."}
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
+
+**校验规则**：
+- 所有 `id` 必须唯一
+- `severity` 必须在枚举内，否则按 `medium` 处理
+- `line` 必须是正整数，缺失记为 1
+- 无发现时输出 `{"findings": []}`，不允许输出 null
+
+**聚合器 (aggregator)** 若收到不符合 Schema 的字段：
+- 缺失必填字段 → 该 Finding 标记为 `invalid` 并警告
+- 非法 severity → 降级为 `medium`
+- 格式错误 → 丢弃该 Finding 并记录
+
 ## 数据模型
 
 核心数据类在 `models.py` 中定义：

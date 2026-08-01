@@ -1,5 +1,17 @@
 # Security Review Agent — 详细设计说明书
 
+> **⚠️ 已归档（2026-08-01）**
+>
+> 本文档是**早期设计稿**，其中多处代码为 `...` 占位符，架构描述（`scanners/`、`reporters/`、`fixers/` 目录）
+> 与**实际实现**不符。
+>
+> **当前实际架构**：`security-review/` 采用 **Claude Agent 编排（`.claude/agents/` 8 个 Agent）+ 单文件 Python 引擎（`engine.py`）**，
+> 支撑库为 `models.py` / `utils.py` / `dependency_db.py`（含 OSV 实时缓存）/ `sast_patterns.py` / `ast_scanner.py`（AST 污点分析）。
+>
+> 实际能力参考：[security-review/README.md](security-review/README.md)。本文档仅作历史参考，不再更新。
+
+---
+
 > **版本**: v1.0  
 > **日期**: 2026-07-27  
 > **基于**: security-review-requirements.md v2.0 + 工作区探索结果

@@ -76,9 +76,15 @@ python engine.py --update-cve
 
 # 禁用外部工具（仅内置引擎）
 python engine.py --no-external
+
+# SARIF 输出（GitHub Code Scanning 原生格式）
+python engine.py --output sarif --no-fix
+
+# 校验所有 YAML 规则的结构
+python engine.py --validate-rules
 ```
 
-> json/markdown 模式下进度消息走 stderr，stdout 只含报告，适合 CI 管道。`--apply` 只修改有明确编辑方案（search/replacement）的可自动修复项，其余给出建议。
+> json/markdown/sarif 模式下进度消息走 stderr，stdout 只含报告，适合 CI 管道。`--apply` 只修改有明确编辑方案（search/replacement）的可自动修复项，其余给出建议。终端模式下不带 `--apply` 且 stdin 为 TTY 时，会进入**交互式修复菜单**（输入编号 / a / q）。扫描器并行执行，大项目速度更快。
 
 ### 方式 3：CI/CD 集成
 

@@ -51,6 +51,7 @@ from utils import (
     is_text_file, should_exclude_path, match_rule_condition,
     generate_fix_operations, parse_yaml_rule, load_ignore_rules,
     is_ignored as utils_is_ignored, compute_git_diff,
+    clear_glob_cache,
 )
 from dependency_db import (
     check_python_package, check_npm_package,
@@ -68,6 +69,101 @@ IGNORE_FILE = ".secreview-ignore"
 
 # 外部工具开关（由 --no-external 控制）
 USE_EXTERNAL_TOOLS = True
+
+
+# =====================================================================
+# YAML 规则校验（--validate-rules）
+# =====================================================================
+
+VALID_SEVERITIES = {"critical", "high", "medium", "low", "info"}
+VALID_DETECT_TYPES = {
+    "file_contains", "file_not_contains", "line_matches",
+    "line_not_matches", "regex_in_file", "file_exists", "value_equals",
+}
+VALID_FIX_TYPES = {
+    "edit", "uncomment", "insert", "insert_after", "insert_before",
+    "config", "replace_with_env_var", "add_to_gitignore",
+}
+
+
+def validate_rule(rule: dict, file_path: str) -> list[str]:
+    """
+    校验单条规则的结构，返回错误列表（空 = 通过）。
+
+    不依赖 jsonschema 库，实现核心约束检查。
+    """
+    errors = []
+    rpath = os.path.basename(file_path)
+
+    if not rule.get("id"):
+        errors.append(f"{rpath}: 缺少必填字段 'id'")
+    if not rule.get("name"):
+        errors.append(f"{rpath}: 缺少必填字段 'name'")
+
+    sev = rule.get("severity")
+    if sev not in VALID_SEVERITIES:
+        errors.append(f"{rpath}: severity '{sev}' 非法（应为 {sorted(VALID_SEVERITIES)}）")
+
+    for i, cond in enumerate(rule.get("detect", [])):
+        if not isinstance(cond, dict):
+            errors.append(f"{rpath}: detect[{i}] 不是对象")
+            continue
+        ctype = cond.get("type")
+        if ctype not in VALID_DETECT_TYPES:
+            errors.append(
+                f"{rpath}: detect[{i}].type '{ctype}' 非法"
+            )
+        # regex/line 类条件必须有 pattern
+        if ctype in ("regex_in_file", "line_matches", "line_not_matches",
+                     "file_contains", "file_not_contains"):
+            if not cond.get("pattern"):
+                errors.append(f"{rpath}: detect[{i}].pattern 缺失")
+        if ctype == "value_equals":
+            if not cond.get("key") or not cond.get("value"):
+                errors.append(f"{rpath}: detect[{i}].key/value 缺失")
+
+    for i, fix in enumerate(rule.get("fix", [])):
+        if not isinstance(fix, dict):
+            errors.append(f"{rpath}: fix[{i}] 不是对象")
+            continue
+        ftype = fix.get("type")
+        if ftype not in VALID_FIX_TYPES:
+            errors.append(f"{rpath}: fix[{i}].type '{ftype}' 非法")
+        effort = fix.get("effort")
+        if effort and effort not in ("low", "medium", "high"):
+            errors.append(f"{rpath}: fix[{i}].effort '{effort}' 非法")
+
+    return errors
+
+
+def validate_all_rules(rules_dir: str) -> tuple[int, int]:
+    """
+    校验所有 YAML 规则文件。
+
+    Returns:
+        (规则总数, 出错数)
+    """
+    count = 0
+    error_count = 0
+    for yml in glob_files(rules_dir, "**/*.yml"):
+        content = read_file_content(yml)
+        if not content:
+            continue
+        rule = parse_yaml_rule(content)
+        if not rule:
+            _safe_print(f"⚠️  无法解析: {yml}", file=sys.stderr)
+            error_count += 1
+            count += 1
+            continue
+        errors = validate_rule(rule, yml)
+        count += 1
+        if errors:
+            error_count += 1
+            for e in errors:
+                _safe_print(f"❌ {e}", file=sys.stderr)
+        else:
+            _safe_print(f"✅ {os.path.relpath(yml, rules_dir)}")
+    return count, error_count
 
 
 # =====================================================================
@@ -1100,76 +1196,129 @@ def scan_auth(probe: ProbeResult, root_path: str,
     """
     认证与授权安全扫描。
 
-    基于启发式规则检测常见认证配置缺陷。
+    覆盖与 auth-scanner.md Agent 同等级的检查项：
+    - 会话管理: Secure/HttpOnly/SameSite Cookie、CSRF Cookie
+    - 认证机制: 默认认证类、Basic Auth、Token 管理
+    - 授权控制: 默认权限类、AllowAny
     """
     findings = []
 
     if "django" in probe.frameworks:
-        # 检查 settings.py 中的认证配置
         settings_files = glob_files(root_path, "**/settings.py")
         for sf in settings_files:
             if changed_files is not None and os.path.abspath(sf) not in changed_files:
                 continue
             rel_path = os.path.relpath(sf, root_path).replace("\\", "/")
-            content = read_file_content(sf)
+            content = read_file_content(sf) or ""
+
+            # 配置检查表: (检查函数, rule_id, title, desc, severity, cwe)
+            checks = [
+                (lambda c: "SESSION_COOKIE_SECURE" not in c,
+                 "session-cookie-secure", "Session Cookie Secure flag not set",
+                 "SESSION_COOKIE_SECURE 未配置，会话 Cookie 会通过 HTTP 明文传输。",
+                 Severity.MEDIUM, "CWE-614"),
+                (lambda c: "SESSION_COOKIE_HTTPONLY" not in c,
+                 "session-cookie-httponly", "Session Cookie HttpOnly flag not set",
+                 "SESSION_COOKIE_HTTPONLY 未配置，Cookie 可被 JavaScript 读取，增加 XSS 窃取会话的风险。",
+                 Severity.LOW, "CWE-1004"),
+                (lambda c: "SESSION_COOKIE_SAMESITE" not in c,
+                 "session-cookie-samesite", "Session Cookie SameSite not configured",
+                 "SESSION_COOKIE_SAMESITE 未配置，跨站请求可能携带 Cookie，增加 CSRF 风险。",
+                 Severity.LOW, "CWE-1275"),
+                (lambda c: "CSRF_COOKIE_SECURE" not in c,
+                 "csrf-cookie-secure", "CSRF Cookie Secure flag not set",
+                 "CSRF_COOKIE_SECURE 未配置，CSRF Token Cookie 可能通过 HTTP 泄露。",
+                 Severity.MEDIUM, "CWE-614"),
+                (lambda c: "DEFAULT_AUTHENTICATION_CLASSES" not in c and "REST_FRAMEWORK" in c,
+                 "default-auth-classes", "DRF default authentication classes not configured",
+                 "配置了 REST_FRAMEWORK 但未设置 DEFAULT_AUTHENTICATION_CLASSES，认证行为不明确。",
+                 Severity.MEDIUM, "CWE-287"),
+                (lambda c: "DEFAULT_PERMISSION_CLASSES" not in c and "REST_FRAMEWORK" in c,
+                 "default-permission-classes", "DRF default permission classes not configured",
+                 "配置了 REST_FRAMEWORK 但未设置 DEFAULT_PERMISSION_CLASSES，默认权限可能过于宽松。",
+                 Severity.MEDIUM, "CWE-862"),
+                (lambda c: bool(re.search(r"DEFAULT_PERMISSION_CLASSES.*AllowAny", c)),
+                 "allow-any-default", "DRF default permission is AllowAny",
+                 "DEFAULT_PERMISSION_CLASSES 设置为 AllowAny，所有端点默认公开访问。",
+                 Severity.HIGH, "CWE-862"),
+                (lambda c: "BasicAuthentication" in c,
+                 "basic-auth-enabled", "Basic Authentication enabled",
+                 "启用了 BasicAuthentication，凭据以 Base64 传输，易被截获。",
+                 Severity.MEDIUM, "CWE-522"),
+            ]
+
+            for check, rule_id, title, desc, sev, cwe in checks:
+                if check(content):
+                    finding = Finding(
+                        id=f"auth-django-{rule_id}",
+                        dimension=ScanDimension.AUTH,
+                        severity=sev,
+                        title=title,
+                        description=desc,
+                        cwe=cwe,
+                        file_path=rel_path,
+                        line=1,
+                    )
+                    if not utils_is_ignored(rel_path, 0, finding.id, ignore_rules):
+                        findings.append(finding)
+
+        # Token 在 URL 中传输（视图层）
+        for ext in (".py", ".js", ".ts"):
+            for fpath in glob_files(root_path, f"**/*{ext}"):
+                if changed_files is not None and os.path.abspath(fpath) not in changed_files:
+                    continue
+                if should_exclude_path(fpath):
+                    continue
+                rel_path = os.path.relpath(fpath, root_path).replace("\\", "/")
+                content = read_file_content(fpath)
+                if not content:
+                    continue
+                # 检测 token/session_key 出现在 URL 查询参数
+                for m in re.finditer(
+                    r"['\"](?:[?&](?:token|session[_-]?key|auth)=)|\?token=",
+                    content
+                ):
+                    line = content[:m.start()].count("\n") + 1
+                    finding = Finding(
+                        id="auth-token-in-url",
+                        dimension=ScanDimension.AUTH,
+                        severity=Severity.HIGH,
+                        title="Token/Session key transmitted in URL",
+                        description="检测到 token 或 session key 可能出现在 URL 中，会泄露到日志和浏览器历史。",
+                        cwe="CWE-598",
+                        file_path=rel_path,
+                        line=line,
+                    )
+                    if not utils_is_ignored(rel_path, line, finding.id, ignore_rules):
+                        findings.append(finding)
+                    break  # 每个文件只报一次
+
+    # Express/Node.js: Helmet 缺失会削弱安全头
+    if "express" in probe.frameworks or "nestjs" in probe.frameworks:
+        for fpath in glob_files(root_path, "**/*.{js,ts}"):
+            if changed_files is not None and os.path.abspath(fpath) not in changed_files:
+                continue
+            if should_exclude_path(fpath):
+                continue
+            rel_path = os.path.relpath(fpath, root_path).replace("\\", "/")
+            content = read_file_content(fpath)
             if not content:
                 continue
-
-            # 检查 SESSION_COOKIE_SECURE
-            if "SESSION_COOKIE_SECURE" not in content:
+            if ("helmet" not in content
+                    and re.search(r"express\(\)|app\.use\(|createServer\(", content)):
                 finding = Finding(
-                    id="auth-django-session-cookie-secure",
+                    id="auth-express-helmet-missing",
                     dimension=ScanDimension.AUTH,
                     severity=Severity.MEDIUM,
-                    title="Session Cookie Secure flag not set",
-                    description=(
-                        "SESSION_COOKIE_SECURE is not configured. "
-                        "Session cookie will be sent over HTTP connections."
-                    ),
-                    cwe="CWE-614",
-                    file_path=rel_path,
-                    line=1,
-                    fixes=[
-                        Fix(
-                            description="Add SESSION_COOKIE_SECURE=True",
-                            type="config",
-                            effort="low",
-                            edit_operations=[
-                                EditOperation(
-                                    file=rel_path,
-                                    old_string="",
-                                    new_string=(
-                                        "SESSION_COOKIE_SECURE = True\n"
-                                        "SESSION_COOKIE_HTTPONLY = True\n"
-                                        "SESSION_COOKIE_SAMESITE = 'Lax'\n"
-                                    ),
-                                    description="Add secure session cookie settings",
-                                )
-                            ],
-                        )
-                    ],
-                )
-                if not utils_is_ignored(rel_path, 0, finding.id, ignore_rules):
-                    findings.append(finding)
-
-            # 检查 DEFAULT_AUTHENTICATION_CLASSES
-            if ("DEFAULT_AUTHENTICATION_CLASSES" not in content
-                    and "REST_FRAMEWORK" in content):
-                finding = Finding(
-                    id="auth-django-default-auth-classes",
-                    dimension=ScanDimension.AUTH,
-                    severity=Severity.MEDIUM,
-                    title="Default authentication classes not configured",
-                    description=(
-                        "REST Framework is configured but "
-                        "DEFAULT_AUTHENTICATION_CLASSES is not set."
-                    ),
-                    cwe="CWE-287",
+                    title="Helmet middleware not used",
+                    description="Express 应用未使用 Helmet 中间件，安全响应头缺失。",
+                    cwe="CWE-693",
                     file_path=rel_path,
                     line=1,
                 )
                 if not utils_is_ignored(rel_path, 0, finding.id, ignore_rules):
                     findings.append(finding)
+                break
 
     return findings
 
@@ -1278,6 +1427,95 @@ def scan_business(probe: ProbeResult, root_path: str,
                     line=line_no,
                 ))
 
+            # 检测敏感信息被日志记录
+            for match in re.finditer(
+                r'logger\.\w+\([^)]*(?:password|passwd|token|secret|api_key)',
+                content, re.IGNORECASE
+            ):
+                line_no = content[:match.start()].count('\n') + 1
+                if utils_is_ignored(rel_path, line_no,
+                                    "business-sensitive-logging", ignore_rules):
+                    continue
+                findings.append(Finding(
+                    id="business-sensitive-logging",
+                    dimension=ScanDimension.BUSINESS,
+                    severity=Severity.HIGH,
+                    title="Sensitive information logged",
+                    description="日志中记录了密码/Token/密钥等敏感信息，会泄露到日志文件。",
+                    cwe="CWE-532",
+                    file_path=rel_path,
+                    line=line_no,
+                ))
+
+            # 检测文件上传未做类型/大小校验
+            for match in re.finditer(
+                r'request\.FILES|request\.files|req\.files',
+                content, re.IGNORECASE
+            ):
+                line_no = content[:match.start()].count('\n') + 1
+                if utils_is_ignored(rel_path, line_no,
+                                    "business-file-upload", ignore_rules):
+                    continue
+                # 检查上下文是否校验了文件类型/大小
+                ctx_start = max(0, content.rfind('\n', 0, match.start()))
+                ctx = content[ctx_start:match.end() + 300]
+                if not re.search(
+                    r'(content_type|file_type|extension|\.size|max_upload|MAX_SIZE|validate.*file)',
+                    ctx, re.IGNORECASE
+                ):
+                    findings.append(Finding(
+                        id="business-file-upload-unvalidated",
+                        dimension=ScanDimension.BUSINESS,
+                        severity=Severity.MEDIUM,
+                        title="File upload without type/size validation",
+                        description="文件上传未校验类型和大小，可能被用于上传恶意文件或造成 DoS。",
+                        cwe="CWE-434",
+                        file_path=rel_path,
+                        line=line_no,
+                    ))
+
+            # 检测客户端可控金额（支付/订单）
+            for match in re.finditer(
+                r"(?:request\.data|request\.POST|request\.GET|req\.body|req\.query)"
+                r"\[?\s*['\"]amount|['\"](?:amount|price|total)['\"]\s*[:=]\s*"
+                r"(?:request\.data|request\.POST|request\.GET|req\.body)",
+                content, re.IGNORECASE
+            ):
+                line_no = content[:match.start()].count('\n') + 1
+                if utils_is_ignored(rel_path, line_no,
+                                    "business-amount-controlled", ignore_rules):
+                    continue
+                findings.append(Finding(
+                    id="business-amount-controlled",
+                    dimension=ScanDimension.BUSINESS,
+                    severity=Severity.HIGH,
+                    title="Amount/price controlled by client",
+                    description="金额或价格直接取自客户端请求，攻击者可以篡改交易金额。",
+                    cwe="CWE-841",
+                    file_path=rel_path,
+                    line=line_no,
+                ))
+
+            # 检测堆栈信息泄露
+            for match in re.finditer(
+                r'(traceback\.print_exc|print_exc\(\)|Response\(.*traceback|"debug.*stack)',
+                content, re.IGNORECASE
+            ):
+                line_no = content[:match.start()].count('\n') + 1
+                if utils_is_ignored(rel_path, line_no,
+                                    "business-stack-leak", ignore_rules):
+                    continue
+                findings.append(Finding(
+                    id="business-stack-trace-leak",
+                    dimension=ScanDimension.BUSINESS,
+                    severity=Severity.MEDIUM,
+                    title="Stack trace may be exposed to users",
+                    description="异常处理可能向客户端暴露堆栈信息，泄露内部结构。",
+                    cwe="CWE-209",
+                    file_path=rel_path,
+                    line=line_no,
+                ))
+
     return findings
 
 
@@ -1303,13 +1541,13 @@ def aggregate_findings(all_findings: list[list[Finding]],
             ):
                 continue
 
-            # 去重 key：SAST 按漏洞类型区分，其他维度按维度区分
-            if f.dimension == ScanDimension.SAST:
-                parts = f.id.split("-")
-                vuln_type = parts[1] if len(parts) >= 3 else "sast"
-                key = (f.file_path, f.line or 0, "sast", vuln_type)
+            # 去重 key：
+            # - config: 按 (file, line) 折叠跨规则重复检测（如 base+django 都报 DEBUG）
+            # - 其他维度: 按完整规则 id 区分，避免同文件不同问题互相吞掉
+            if f.dimension == ScanDimension.CONFIG:
+                key = (f.file_path, f.line or 0, "config")
             else:
-                key = (f.file_path, f.line or 0, f.dimension.value, "")
+                key = (f.file_path, f.line or 0, f.dimension.value, f.id)
             if key in seen:
                 continue
             seen.add(key)
@@ -1480,6 +1718,135 @@ def generate_markdown_report(report: Report) -> str:
     return "\n".join(lines)
 
 
+def generate_sarif_report(report: Report) -> str:
+    """
+    生成 SARIF 2.1.0 报告（GitHub Code Scanning / VS Code 原生支持）。
+
+    严重度映射: critical/high → error, medium → warning, low/info → note
+    """
+    # 收集所有规则定义（去重）
+    rules = {}
+    for f in report.findings:
+        rule_id = f.id
+        if rule_id not in rules:
+            rules[rule_id] = {
+                "id": rule_id,
+                "name": f.title,
+                "shortDescription": {"text": f.title[:200]},
+                "fullDescription": {"text": f.description},
+                "helpUri": "https://owasp.org/www-project-top-ten/",
+                "properties": {
+                    "cwe": f.cwe or "",
+                    "owasp": f.owasp or "",
+                    "dimension": f.dimension.value,
+                },
+            }
+
+    def _level(sev: Severity) -> str:
+        if sev in (Severity.CRITICAL, Severity.HIGH):
+            return "error"
+        if sev == Severity.MEDIUM:
+            return "warning"
+        return "note"
+
+    results = []
+    for f in report.findings:
+        location = None
+        if f.file_path:
+            loc = {"artifactLocation": {"uri": f.file_path.replace("\\", "/")}}
+            if f.line:
+                loc["region"] = {"startLine": f.line}
+            location = [{"physicalLocation": loc}]
+        results.append({
+            "ruleId": f.id,
+            "level": _level(f.severity),
+            "message": {
+                "text": f"{f.title}\n{f.description}".strip()
+            },
+            "locations": location or [],
+            "partialFingerprints": {
+                "primaryLocationLineHash": f"{f.file_path or ''}:{f.line or 0}"
+            },
+            "properties": {
+                "severity": f.severity.value,
+                "auto_fixable": f.is_auto_fixable,
+                "fixes": [fix.description for fix in f.fixes],
+            },
+        })
+
+    sarif = {
+        "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/"
+                   "master/Schemata/sarif-schema-2.1.0.json",
+        "version": "2.1.0",
+        "runs": [{
+            "tool": {
+                "driver": {
+                    "name": "SecurityReviewAgent",
+                    "informationUri": "https://github.com/hubnsh/Security-Review-Agent",
+                    "version": "2.1.1",
+                    "rules": list(rules.values()),
+                }
+            },
+            "results": results,
+        }],
+    }
+    return json.dumps(sarif, indent=2, ensure_ascii=False)
+
+
+def interactive_fix(findings: list[Finding], root_path: str) -> int:
+    """
+    交互式修复（终端模式）。
+
+    报告输出后提示用户输入编号 / all / q 选择要应用的修复。
+    """
+    auto = [(i, f) for i, f in enumerate(findings) if f.is_auto_fixable]
+    if not auto:
+        _safe_print("   (无可自动修复项)")
+        return 0
+
+    applied = 0
+    while True:
+        _safe_print(f"\n🛠 应用修复 — 共 {len(auto)} 项可自动修复\n")
+        for idx, (_i, f) in enumerate(auto, 1):
+            _safe_print(
+                f"  [{idx}] {f.severity.emoji} [{f.severity.label}] {f.title}"
+            )
+        _safe_print(f"  [a] 全部 ({len(auto)} 项)  [q] 退出")
+
+        try:
+            choice = input(
+                "请输入编号(逗号分隔), [a]全部, [q]退出 > "
+            ).strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            _safe_print("\n已退出")
+            break
+
+        if choice in ("q", "quit", "exit"):
+            break
+
+        if choice in ("a", "all"):
+            selected = [f for _i, f in auto]
+            applied = apply_fixes(selected, root_path, "all")
+            break
+
+        indices = []
+        for part in choice.split(","):
+            part = part.strip()
+            if part.isdigit():
+                idx = int(part) - 1
+                if 0 <= idx < len(auto):
+                    indices.append(auto[idx][1])
+                else:
+                    _safe_print(f"  ⚠️ 编号 {part} 超出范围")
+        if not indices:
+            _safe_print("  ⚠️ 无效输入，请输入编号或 a/q")
+            continue
+        applied = apply_fixes(indices, root_path, "all")
+        break
+
+    return applied
+
+
 def apply_fixes(findings: list[Finding], root_path: str,
                 selection: str) -> int:
     """
@@ -1595,9 +1962,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--output", "-o",
-        choices=["terminal", "json", "markdown"],
+        choices=["terminal", "json", "markdown", "sarif"],
         default="terminal",
-        help="输出格式：terminal / json / markdown（默认 terminal）",
+        help="输出格式：terminal / json / markdown / sarif（默认 terminal）",
     )
     parser.add_argument(
         "--no-fix",
@@ -1613,6 +1980,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--update-cve",
         action="store_true",
         help="从 OSV.dev 拉取最新 CVE 数据并写入缓存（.cve-cache.json）",
+    )
+    parser.add_argument(
+        "--validate-rules",
+        action="store_true",
+        help="校验 rules/ 下所有 YAML 规则的结构",
     )
     parser.add_argument(
         "--apply",
@@ -1636,6 +2008,14 @@ def main(argv: list[str] | None = None) -> int:
     """主入口"""
     args = parse_args(argv)
 
+    # 独立命令：校验规则
+    if args.validate_rules:
+        rules_dir = os.path.join(os.path.dirname(__file__), "rules")
+        _safe_print(f"🔍 校验规则目录: {rules_dir}\n")
+        count, error_count = validate_all_rules(rules_dir)
+        _safe_print(f"\n📊 共 {count} 条规则，{error_count} 条出错")
+        return 1 if error_count else 0
+
     # 独立命令：更新 CVE 缓存
     if args.update_cve:
         _safe_print("🔄 正在从 OSV.dev 拉取 CVE 数据...")
@@ -1657,6 +2037,9 @@ def main(argv: list[str] | None = None) -> int:
 
     global USE_EXTERNAL_TOOLS
     USE_EXTERNAL_TOOLS = not args.no_external
+
+    # 每次扫描开始时清空文件遍历缓存
+    clear_glob_cache()
 
     if not os.path.isdir(root_path):
         _safe_print(f"❌ 路径不存在: {root_path}", file=sys.stderr)
@@ -1716,19 +2099,28 @@ def main(argv: list[str] | None = None) -> int:
         "business": ("💼 业务逻辑", scan_business),
     }
 
+    # 并行执行扫描器（I/O + 正则，线程池即可提速）
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     all_findings = []
-    for dim in active_dims:
-        if dim not in scanner_map:
-            continue
-        label, scanner_fn = scanner_map[dim]
-        progress(f"   - {label}...", end="", flush=True)
-        try:
-            findings = scanner_fn(probe, root_path, ignore_rules,
-                                  changed_files)
-            all_findings.append(findings)
-            progress(f" {len(findings)} 项发现")
-        except Exception as e:
-            progress(f" ❌ 错误: {e}")
+    active = [d for d in active_dims if d in scanner_map]
+    with ThreadPoolExecutor(max_workers=min(len(active), 5)) as executor:
+        futures = {}
+        for dim in active:
+            label, scanner_fn = scanner_map[dim]
+            progress(f"   - {label}...", end="", flush=True)
+            fut = executor.submit(
+                scanner_fn, probe, root_path, ignore_rules, changed_files
+            )
+            futures[fut] = (dim, label)
+
+        for fut in as_completed(futures):
+            dim, label = futures[fut]
+            try:
+                results = fut.result()
+                all_findings.append(results)
+                progress(f"   ✓ {label}: {len(results)} 项发现")
+            except Exception as e:
+                progress(f"   ❌ {label}: {e}")
 
     # Phase 3: 聚合去重
     progress("🔄 Phase 3/5: 聚合去重...")
@@ -1757,6 +2149,8 @@ def main(argv: list[str] | None = None) -> int:
         output = generate_json_report(report)
     elif args.output == "markdown":
         output = generate_markdown_report(report)
+    elif args.output == "sarif":
+        output = generate_sarif_report(report)
     else:
         output = generate_terminal_report(report)
 
@@ -1767,13 +2161,16 @@ def main(argv: list[str] | None = None) -> int:
     except (AttributeError, BrokenPipeError):
         _safe_print(output)
 
-    # 应用修复
+    # 应用修复：批处理（--apply）或交互式（终端 TTY）
     if args.apply and not args.no_fix:
         progress("\n🛠 应用修复...")
         n = apply_fixes(findings, root_path, args.apply)
         progress(f"\n✅ 已应用 {n} 个修复操作")
         if n == 0:
             progress("   (提示: 无匹配的修复操作，可能已修复或选择编号无效)")
+    elif (args.output == "terminal" and not args.no_fix
+          and sys.stdin.isatty()):
+        interactive_fix(findings, root_path)
 
     return 0
 

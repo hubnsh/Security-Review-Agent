@@ -24,6 +24,8 @@ tools: Bash, Read, Glob
 
 ### Step 2: Python 依赖扫描
 
+> **优先使用 OSV 缓存**：如果项目中存在 `security-review/.cve-cache.json`（由 `python engine.py --update-cve` 生成），`check_*` 函数会自动优先使用其中的**实时 OSV 数据**，再回退内置静态库。使用前可先运行 `python security-review/engine.py --update-cve` 刷新缓存。
+
 #### 2a: 尝试 pip-audit（首选）
 ```bash
 # 安装 pip-audit（如果未安装）

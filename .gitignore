@@ -19,6 +19,9 @@ coverage.xml
 *.cover
 .hypothesis/
 
+# 本地单元测试（仅本地运行，不提交 GitHub）
+security-review/tests/
+
 # 虚拟环境
 .venv/
 venv/
@@ -50,7 +53,7 @@ security-report.md
 *~
 .DS_Store
 Thumbs.db
-
+.tests/
 # ============================================================
 # Claude Code 本地配置（会话自动生成的权限白名单，不入库）
 # ============================================================
