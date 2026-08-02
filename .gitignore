@@ -42,6 +42,7 @@ security-report.json
 security-report.md
 *.report.json
 *.report.md
+security-audit.log.jsonl
 
 # ============================================================
 # IDE / 编辑器 / 系统

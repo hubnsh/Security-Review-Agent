@@ -67,6 +67,66 @@ from ast_scanner import scan_python_source
 # =====================================================================
 IGNORE_FILE = ".secreview-ignore"
 
+# 审计日志文件（企业级：每次扫描/修复的操作痕迹）
+# 可用环境变量 SECREVIEW_AUDIT_LOG 指定路径
+AUDIT_LOG_DEFAULT = os.environ.get(
+    "SECREVIEW_AUDIT_LOG",
+    os.path.join(os.getcwd(), "security-audit.log.jsonl"),
+)
+
+ENGINE_VERSION = "2.2.0"
+
+
+def _get_git_commit(root_path: str) -> str:
+    """获取当前 git 提交哈希（便于审计复现）"""
+    import subprocess
+    try:
+        r = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, cwd=root_path, timeout=10,
+        )
+        if r.returncode == 0:
+            return r.stdout.strip()
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    return "unknown"
+
+
+def _get_rules_version(rules_dir: str) -> str:
+    """计算规则集版本（文件数 + 最新修改时间哈希）"""
+    import hashlib
+    files = sorted(glob_files(rules_dir, "**/*.yml"))
+    if not files:
+        return "0"
+    h = hashlib.md5()
+    for f in files:
+        h.update(os.path.basename(f).encode("utf-8"))
+    return f"{len(files)}-{h.hexdigest()[:8]}"
+
+
+def _log_audit(event: str, details: dict, audit_path: str = "") -> None:
+    """
+    写审计日志（JSON Lines 格式）。
+
+    Args:
+        event: 事件类型（scan_start / scan_complete / fix_applied / fix_skipped）
+        details: 事件详情（自动附加时间戳）
+        audit_path: 日志文件路径（默认 AUDIT_LOG_DEFAULT）
+    """
+    entry = {
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "event": event,
+        "engine_version": ENGINE_VERSION,
+        **details,
+    }
+    try:
+        path = audit_path or AUDIT_LOG_DEFAULT
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+
+
 # 外部工具开关（由 --no-external 控制）
 USE_EXTERNAL_TOOLS = True
 
@@ -1823,7 +1883,7 @@ def interactive_fix(findings: list[Finding], root_path: str) -> int:
 
         if choice in ("a", "all"):
             selected = [f for _i, f in auto]
-            applied = apply_fixes(selected, root_path, "all")
+            applied = _apply_with_approval(selected, root_path)
             break
 
         indices = []
@@ -1838,21 +1898,50 @@ def interactive_fix(findings: list[Finding], root_path: str) -> int:
         if not indices:
             _safe_print("  ⚠️ 无效输入，请输入编号或 a/q")
             continue
-        applied = apply_fixes(indices, root_path, "all")
+        applied = _apply_with_approval(indices, root_path)
         break
 
     return applied
 
 
+def _apply_with_approval(selected: list[Finding], root_path: str) -> int:
+    """
+    应用选中的修复，含高危审批确认。
+
+    存在 CRITICAL/HIGH 时提示用户确认；拒绝则仅应用 LOW/MEDIUM。
+    """
+    high = [f for f in selected
+            if f.severity in (Severity.CRITICAL, Severity.HIGH)]
+    approve = False
+    if high:
+        _safe_print(f"\n⛔ 以下 {len(high)} 项为高危修复，需审批：")
+        for f in high:
+            _safe_print(f"     - [{f.severity.label}] {f.title} "
+                        f"({f.file_path}:{f.line})")
+        try:
+            confirm = input("确认应用高危修复? (y/N) > ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            confirm = "n"
+        approve = confirm in ("y", "yes", "approve")
+
+    return apply_fixes(selected, root_path, "all",
+                       approve_high=approve)
+
+
 def apply_fixes(findings: list[Finding], root_path: str,
-                selection: str) -> int:
+                selection: str,
+                approve_high: bool = False) -> int:
     """
     应用修复方案（批量）。
+
+    企业级分级批准：CRITICAL/HIGH 的修复默认需要审批（approve_high=False
+    时跳过并记入审计），LOW/MEDIUM 可直接应用。
 
     Args:
         findings: 已排序的 Finding 列表
         root_path: 项目根目录
         selection: 选择字符串（"all" 或 "1,3,5"，1 基索引对应报告编号）
+        approve_high: 是否批准高危修复（默认 False）
 
     Returns:
         成功应用的 EditOperation 数量
@@ -1874,6 +1963,24 @@ def apply_fixes(findings: list[Finding], root_path: str,
     applied = 0
     for idx in selected:
         finding = findings[idx]
+
+        # 分级批准：高危修复需审批
+        if finding.severity in (Severity.CRITICAL, Severity.HIGH) \
+                and not approve_high:
+            _safe_print(
+                f"   ⛔ [{finding.severity.label}] {finding.title} — "
+                f"高危修复需审批（--approve 或交互确认）",
+                file=sys.stderr,
+            )
+            _log_audit("fix_skipped_requires_approval", {
+                "finding_id": finding.id,
+                "dimension": finding.dimension.value,
+                "severity": finding.severity.value,
+                "file": finding.file_path,
+                "title": finding.title,
+            })
+            continue
+
         # 每个 finding 只应用一个修复（多个 fix 是互斥的备选方案）
         for fix in finding.fixes:
             if not fix.edit_operations:
@@ -1895,6 +2002,17 @@ def apply_fixes(findings: list[Finding], root_path: str,
                             f.write(new_content)
                         _safe_print(f"   ✅ {op.file}: {op.description}",
                                     file=sys.stderr)
+                        # 审计：记录每次修改
+                        _log_audit("fix_applied", {
+                            "finding_id": finding.id,
+                            "dimension": finding.dimension.value,
+                            "severity": finding.severity.value,
+                            "file": op.file,
+                            "description": op.description,
+                            "old_len": len(op.old_string),
+                            "new_len": len(op.new_string),
+                            "new_string_preview": op.new_string[:80],
+                        })
                         applied += 1
                         fix_succeeded = True
                     except (OSError, PermissionError) as e:
@@ -1987,6 +2105,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--apply",
         metavar="SELECTION",
         help="扫描后自动应用修复：'all' 或编号列表如 '1,3,5'（与报告编号对应）",
+    )
+    parser.add_argument(
+        "--approve",
+        action="store_true",
+        help="批准高危（CRITICAL/HIGH）修复。默认仅应用 LOW/MEDIUM，高危需审批",
     )
     parser.add_argument(
         "--diff", "-d",
@@ -2088,6 +2211,17 @@ def main(argv: list[str] | None = None) -> int:
     else:
         active_dims = ALL_DIMENSIONS[:]
 
+    # 审计：扫描开始（记录版本元数据）
+    rules_dir = os.path.join(os.path.dirname(__file__), "rules")
+    _log_audit("scan_start", {
+        "project": root_path,
+        "git_commit": _get_git_commit(root_path),
+        "rules_version": _get_rules_version(rules_dir),
+        "dimensions": active_dims,
+        "diff": args.diff or None,
+        "external_tools": USE_EXTERNAL_TOOLS,
+    })
+
     scanner_map = {
         "config": ("⚙️  配置安全", scan_config),
         "dependency": ("📦 依赖漏洞", scan_dependencies),
@@ -2123,6 +2257,17 @@ def main(argv: list[str] | None = None) -> int:
     progress("🔄 Phase 3/5: 聚合去重...")
     findings = aggregate_findings(all_findings, ignore_rules)
     progress(f"   → 去重后: {len(findings)} 项发现")
+
+    # 审计：扫描完成（记录结果统计 + 版本元数据，供复现）
+    rules_dir = os.path.join(os.path.dirname(__file__), "rules")
+    _log_audit("scan_complete", {
+        "project": root_path,
+        "git_commit": _get_git_commit(root_path),
+        "rules_version": _get_rules_version(rules_dir),
+        "dimensions": active_dims,
+        "findings_total": sum(len(x) for x in all_findings),
+        "findings_after_dedup": len(findings),
+    })
 
     # Phase 4: 修复方案已在扫描阶段生成（在 Finding.fixes 中）
 
@@ -2161,7 +2306,8 @@ def main(argv: list[str] | None = None) -> int:
     # 应用修复：批处理（--apply）或交互式（终端 TTY）
     if args.apply and not args.no_fix:
         progress("\n🛠 应用修复...")
-        n = apply_fixes(findings, root_path, args.apply)
+        n = apply_fixes(findings, root_path, args.apply,
+                        approve_high=args.approve)
         progress(f"\n✅ 已应用 {n} 个修复操作")
         if n == 0:
             progress("   (提示: 无匹配的修复操作，可能已修复或选择编号无效)")

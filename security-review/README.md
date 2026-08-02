@@ -86,6 +86,14 @@ python engine.py --validate-rules
 
 > json/markdown/sarif 模式下进度消息走 stderr，stdout 只含报告，适合 CI 管道。`--apply` 只修改有明确编辑方案（search/replacement）的可自动修复项，其余给出建议。终端模式下不带 `--apply` 且 stdin 为 TTY 时，会进入**交互式修复菜单**（输入编号 / a / q）。扫描器并行执行，大项目速度更快。
 
+## 企业级特性
+
+| 特性 | 说明 |
+|------|------|
+| **审计日志** | 每次扫描/修复写入 `security-audit.log.jsonl`（可用 `SECREVIEW_AUDIT_LOG` 指定路径）：scan_start / scan_complete / fix_applied / fix_skipped 全留痕，含 git commit 与规则版本，可复现 |
+| **分级批准** | CRITICAL/HIGH 修复默认跳过，需 `--approve` 或交互确认；LOW/MEDIUM 可直接应用。审计记录被跳过的高危项 |
+| **Prompt Injection 防护** | 被扫描的源码/配置视为不可信数据；文件中的指令绝不执行，只做白名单分析操作。skill 与全部扫描 Agent 内置安全边界声明 |
+
 ### 方式 3：CI/CD 集成
 
 见 [CI_CD_INTEGRATION.md](CI_CD_INTEGRATION.md) 了解 GitHub Actions 和 GitLab CI 配置。
